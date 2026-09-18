@@ -147,15 +147,66 @@ graph() {
     --rawfile kinds "$1.kinds" -f "$share/graph.jq" < "$1"
 }
 
+# diffs: each definition's own patch, for a renderer that shows one. The whole
+# of every changed file as one hunk (-U999999), walked once, with each
+# definition's lines picked out of it: what it has on the new side and what it
+# had on the old, which is the pair of ranges the table already carries. Taking
+# the two sides separately rather than one range on one side is what keeps a
+# removed definition's lines out of the definition that followed it.
+# A row an id, the mark, the line number on each side, and the text.
+diffs() {
+  awk -F'\t' '$2 != "file" && $8 != "" {
+      id = $1 "#" ($4 == "" ? $3 : $4 "." $3)
+      ns = ne = os = oe = 0
+      if ($7 == "new") { ns = $8; ne = $9; if ($14 != "") { os = $14; oe = $15 } }
+      else { os = $8; oe = $9 }
+      print $1 "\t" id "\t" ns "\t" ne "\t" os "\t" oe
+    }' "$1" > "$tmp/ranges"
+  [ -s "$tmp/ranges" ] || { echo '{}'; return; }
+  cut -f1 "$tmp/ranges" | sort -u > "$tmp/dpaths"
+  if [ -n "$head" ]; then
+    tr '\n' '\0' < "$tmp/dpaths" | xargs -0 git diff -U999999 --no-renames "$base" "$head" -- 2>/dev/null
+  else
+    tr '\n' '\0' < "$tmp/dpaths" | xargs -0 git --no-optional-locks diff-index -U999999 --no-renames "$base" -- 2>/dev/null
+    while read -r p; do
+      [ -e "$p" ] && ! git ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && git diff --no-index -U999999 /dev/null "$p" 2>/dev/null
+    done < "$tmp/dpaths"
+  fi > "$tmp/full"
+  awk -F'\t' '
+    FILENAME == ARGV[1] { n++; P[n] = $1; ID[n] = $2; NA[n] = $3 + 0; NZ[n] = $4 + 0; OA[n] = $5 + 0; OZ[n] = $6 + 0; next }
+    /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+    /^@@/ { split($0, w, " "); split(w[2], a, ","); o = substr(a[1], 2) + 0; split(w[3], b, ","); nn = substr(b[1], 2) + 0; next }
+    {
+      c = substr($0, 1, 1)
+      if (c != " " && c != "+" && c != "-") next
+      text = substr($0, 2)
+      for (r = 1; r <= n; r++) {
+        if (P[r] != f) continue
+        keep = 0
+        if (c != "-" && NA[r] && nn >= NA[r] && nn <= NZ[r]) keep = 1
+        if (c != "+" && OA[r] && o >= OA[r] && o <= OZ[r]) keep = 1
+        if (keep) print ID[r] "\t" c "\t" (c == "+" ? "" : o) "\t" (c == "-" ? "" : nn) "\t" text
+      }
+      if (c != "+") o++
+      if (c != "-") nn++
+    }' "$tmp/ranges" "$tmp/full" |
+  jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))
+    | group_by(.[0]) | map({key: .[0][0], value: (.[0:400] | map({mark: .[1], old: .[2], new: .[3], text: (.[4] // "")}))})
+    | from_entries'
+}
+
 # --html: the graph inside share/view.html, which is the one page seam ships:
 # the definitions in reading order, and clicking one shows what it uses and what
 # uses it, each edge saying whether the mention is in a signature or a body. The
 # data goes in where the marker is, with </ escaped, so no string in the code
 # being read can close the script tag early.
 page() {
+  diffs "$1" > "$tmp/diffs.json"
   awk '/<!--SEAM DATA-->/ { exit } { print }' "$share/view.html"
   printf '<script id="seam-data" type="application/json">'
-  graph "$1" | jq -c . | sed 's|</|<\\/|g'
+  graph "$1" | jq -c --slurpfile d "$tmp/diffs.json" \
+    '.definitions |= map(. + {diff: ($d[0][.id] // null)})' | sed 's|</|<\\/|g'
   printf '</script>\n'
   awk 'f { print } /<!--SEAM DATA-->/ { f = 1 }' "$share/view.html"
 }

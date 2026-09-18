@@ -104,6 +104,7 @@
   .node { cursor: pointer; }
   .node.fade { opacity: .22; }
   .node.sel rect { stroke: var(--accent); stroke-width: 2.6; fill: var(--mark); }
+  .node rect.entry { fill: var(--accent); stroke: none; }
   .legend {
     position: absolute; left: 12px; bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap;
     background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line);
@@ -141,6 +142,18 @@
     font: 12.5px var(--mono); cursor: pointer;
   }
   .edges button:hover { background: var(--mark); }
+  .diff {
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; margin-top: 8px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--panel);
+    overflow: auto; max-height: 52vh; padding: 6px 0;
+  }
+  .dl { display: flex; gap: 10px; padding: 0 10px; white-space: pre; }
+  .dl .ln { color: var(--faint); min-width: 4ch; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .dl .tx { flex: 1; }
+  .dl.add { background: color-mix(in srgb, var(--added) 14%, transparent); }
+  .dl.del { background: color-mix(in srgb, var(--removed) 14%, transparent); }
+  .dl.add .tx { color: var(--added); }
+  .dl.del .tx { color: var(--removed); }
   .facet { font: 10px/1 var(--ui); letter-spacing: .04em; text-transform: uppercase; flex: none; }
   .facet.iface { color: var(--iface); }
   .facet.body { color: var(--body); }
@@ -170,7 +183,7 @@
 
   var GLYPH = { added: "+", removed: "−", signature: "~", body: "·" };
   var WORD = { added: "added", removed: "removed", signature: "interface changed", body: "body only" };
-  var NW = 168, NH = 26, COL = 232, ROW = 38;
+  var NH = 28, GAP = 72, ROW = 42, MEASURE = null;
 
   function h(tag, cls, text) {
     var n = document.createElement(tag);
@@ -380,10 +393,19 @@
         top[c] = offset;
         offset += tallest + 1;
       }
+      var lab = {}, W = {}, colw = {}, deepest = 0;
+      ns.forEach(function (d) {
+        lab[d.id] = cut(label(d), 44);
+        W[d.id] = Math.max(104, Math.ceil(textW(lab[d.id]) + 38));
+        if (!colw[layer[d.id]] || W[d.id] > colw[layer[d.id]]) colw[layer[d.id]] = W[d.id];
+        if (layer[d.id] > deepest) deepest = layer[d.id];
+      });
+      var colx = {}, acc = 0;
+      for (var L = 0; L <= deepest; L++) { colx[L] = acc; acc += (colw[L] || 104) + GAP; }
       var placed = ns.map(function (d) {
         return {
-          def: d,
-          x: layer[d.id] * COL,
+          def: d, w: W[d.id], label: lab[d.id],
+          x: colx[layer[d.id]],
           y: (top[comp[d.id]] + idx[d.id]) * ROW
         };
       });
@@ -429,8 +451,8 @@
         var a = L.at[e.from], b = L.at[e.to];
         if (!a || !b) return;
         var isBack = L.back[e.from + ">" + e.to];
-        var x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
-        if (isBack) { x1 = a.x; x2 = b.x + NW; }
+        var x1 = a.x + a.w, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
+        if (isBack) { x1 = a.x; x2 = b.x + b.w; }
         var dx = Math.max(30, Math.abs(x2 - x1) / 2);
         var path = s("path", "edge " + e.facet + (isBack ? " back" : "") +
           (lit ? ((e.from === lit || e.to === lit) ? " lit" : " fade") : ""));
@@ -468,7 +490,7 @@
 
       var box = { x1: 0, y1: 0, x2: 0, y2: 0 };
       L.nodes.forEach(function (p) {
-        box.x2 = Math.max(box.x2, p.x + NW); box.y2 = Math.max(box.y2, p.y + NH);
+        box.x2 = Math.max(box.x2, p.x + p.w); box.y2 = Math.max(box.y2, p.y + NH);
       });
       if (fit) {
         var w = map.clientWidth || 800, hh = map.clientHeight || 600;
@@ -478,7 +500,10 @@
       }
       apply();
 
-      svg.addEventListener("click", function () { if (state.sel) { state.sel = null; draw(); } });
+      svg.addEventListener("click", function () {
+        if (dragged) { dragged = false; return; }
+        if (state.sel) { state.sel = null; draw(); }
+      });
       svg.addEventListener("wheel", function (e) {
         e.preventDefault();
         var r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
@@ -487,16 +512,27 @@
         view.y = my - (my - view.y) * (k2 / view.k);
         view.k = k2; apply();
       }, { passive: false });
-      var down = null;
+      // Pan only once the pointer has actually moved, and capture it only then:
+      // capturing on the press retargets the click to the svg, and every box
+      // under it stops answering.
+      var down = null, dragged = false;
       svg.addEventListener("pointerdown", function (e) {
-        down = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
-        svg.classList.add("dragging"); svg.setPointerCapture(e.pointerId);
+        down = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, id: e.pointerId, held: false };
+        dragged = false;
       });
       svg.addEventListener("pointermove", function (e) {
         if (!down) return;
-        view.x = down.vx + (e.clientX - down.x); view.y = down.vy + (e.clientY - down.y); apply();
+        var dx = e.clientX - down.x, dy = e.clientY - down.y;
+        if (!down.held) {
+          if (Math.abs(dx) + Math.abs(dy) < 4) return;
+          down.held = dragged = true;
+          svg.classList.add("dragging");
+          try { svg.setPointerCapture(down.id); } catch (err) {}
+        }
+        view.x = down.vx + dx; view.y = down.vy + dy; apply();
       });
       svg.addEventListener("pointerup", function () { down = null; svg.classList.remove("dragging"); });
+      svg.addEventListener("pointercancel", function () { down = null; svg.classList.remove("dragging"); });
 
       var z = h("div", "zoomers");
       [["−", function () { view.k = Math.max(0.05, view.k / 1.25); apply(); }],
@@ -606,6 +642,19 @@
       if (d.staged != null) meta.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
       detail.appendChild(meta);
       if (d.head) detail.appendChild(h("pre", "head", d.head));
+      if (d.diff && d.diff.length) {
+        var plus = d.diff.filter(function (l) { return l.mark === "+"; }).length;
+        var minus = d.diff.filter(function (l) { return l.mark === "-"; }).length;
+        detail.appendChild(h("div", "sec", "diff \u00b7 +" + plus + " \u2212" + minus));
+        var pre = h("div", "diff");
+        d.diff.forEach(function (l) {
+          var line = h("div", "dl " + (l.mark === "+" ? "add" : l.mark === "-" ? "del" : "ctx"));
+          line.appendChild(h("span", "ln", l.new || l.old || ""));
+          line.appendChild(h("span", "tx", (l.mark === " " ? " " : l.mark) + " " + l.text));
+          pre.appendChild(line);
+        });
+        detail.appendChild(pre);
+      }
       section("uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }),
         "Nothing else in this change.");
       section("used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }),

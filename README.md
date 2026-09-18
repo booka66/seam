@@ -14,14 +14,26 @@ seam works out what a change did to the named things in it and hands that to
 whatever draws: a picker, a graph, a comment on a merge request. It ships one
 renderer of its own and no more.
 
-`--html` writes a page and opens it. It opens on the **graph**: definitions as
-boxes laid out left to right, entry points on the left and what they use to the
-right, an arrow for every mention. A solid arrow is a mention in the user's own
-signature, so a change to what it points at carries on outward; a dashed one is
-in the body, where it stops; a red dashed one is a cycle, drawn where the layout
-had to cut it, so a knot shows rather than hiding. Click a box and everything but
-its neighbours dims, with its signature, its edges both ways and what it means in
-the panel. `g` swaps to the tree, drag to pan, wheel to zoom, `/` to filter.
+`--html` writes a page and opens it, with two views of the same change.
+
+The **graph**: definitions as boxes laid out left to right, each column headed
+(entry points, what they use, and what that uses), each file drawn as a frame
+behind the definitions in it, and an arrow for every mention. A solid arrow is a
+mention in the user's own signature, so a change to what it points at carries on
+outward; a dashed one is in the body, where it stops; a red dashed one is a
+cycle, drawn where the layout had to cut it, so a knot shows rather than hiding.
+A box is as wide as its name, since a truncated name is not a name. Click one and
+everything but its neighbours dims.
+
+The **reading order** (`g`): the same change as numbered threads, each read top
+to bottom, the connector between two rows saying whether the mention was in a
+signature or in a body. Every definition has a tick, every thread a progress bar,
+and `space` marks one read and moves on — read state is per definition, not per
+file, and lives in that browser.
+
+Either way the panel holds the definition: what its change means in a sentence,
+then its own diff, then what it uses and what uses it. `s` opens the score,
+drag to pan, wheel to zoom, `/` to filter.
 
 It is one self-contained file with the graph inside it, so it works offline and
 can be sent to someone. The same page (`share/view.html`) opened on its own takes

@@ -4,171 +4,258 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>seam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
-    --ground: #f7f7f5;
+    --ground: #f7f6f3;
     --panel: #ffffff;
-    --line: #e2e1dd;
-    --ink: #1c1d22;
-    --dim: #6b6d76;
-    --faint: #93959d;
-    --accent: #3a5ccc;
+    --sunk: #efeee9;
+    --line: #e0dfd9;
+    --rule: #eceae4;
+    --ink: #17181c;
+    --dim: #6b6d75;
+    --faint: #9a9ca3;
+    --ghost: #c3c4c9;
+    --accent: #3b53b8;
+    --accent-soft: #e6eaf9;
     --added: #2f7d4f;
-    --removed: #a8402f;
-    --iface: #9a6410;
+    --added-soft: rgba(47, 125, 79, 0.11);
+    --removed: #b04630;
+    --removed-soft: rgba(176, 70, 48, 0.11);
+    --iface: #9a6a17;
+    --iface-soft: #fbf2e0;
+    --iface-line: #e2cb9a;
     --body: #8a8c94;
     --mark: #eceae4;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --display: "Instrument Serif", Georgia, serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground: #16171b; --panel: #1d1e23; --line: #2e3038; --ink: #e6e6e4;
-      --dim: #9b9da6; --faint: #6e7079; --accent: #8aa2f2; --added: #6cc08a;
-      --removed: #e08373; --iface: #d6a24c; --body: #71737c; --mark: #262830;
+      --ground: #101116; --panel: #15161c; --sunk: #12131a; --line: #24262e; --rule: #1c1e25;
+      --ink: #e8e6e1; --dim: #8e9099; --faint: #6f727c; --ghost: #4c4f59;
+      --accent: #8ba3f0; --accent-soft: #23294a;
+      --added: #74c28d; --added-soft: rgba(116, 194, 141, 0.11);
+      --removed: #e08b76; --removed-soft: rgba(224, 139, 118, 0.11);
+      --iface: #d8a24a; --iface-soft: #1b1a17; --iface-line: #4a3a20;
+      --body: #6f727c; --mark: #1f222b;
     }
   }
   :root[data-theme="dark"] {
-    --ground: #16171b; --panel: #1d1e23; --line: #2e3038; --ink: #e6e6e4;
-    --dim: #9b9da6; --faint: #6e7079; --accent: #8aa2f2; --added: #6cc08a;
-    --removed: #e08373; --iface: #d6a24c; --body: #71737c; --mark: #262830;
+    --ground: #101116; --panel: #15161c; --sunk: #12131a; --line: #24262e; --rule: #1c1e25;
+    --ink: #e8e6e1; --dim: #8e9099; --faint: #6f727c; --ghost: #4c4f59;
+    --accent: #8ba3f0; --accent-soft: #23294a;
+    --added: #74c28d; --added-soft: rgba(116, 194, 141, 0.11);
+    --removed: #e08b76; --removed-soft: rgba(224, 139, 118, 0.11);
+    --iface: #d8a24a; --iface-soft: #1b1a17; --iface-line: #4a3a20;
+    --body: #6f727c; --mark: #1f222b;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--ground); color: var(--ink);
     font: 14px/1.5 var(--ui); -webkit-font-smoothing: antialiased; overflow: hidden;
+    display: flex; flex-direction: column;
   }
+  button, input { font-family: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---------- top bar ---------- */
   header {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px;
-    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    height: 58px; flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--line);
   }
-  header h1 { font: 600 15px/1 var(--ui); margin: 0; letter-spacing: .02em; }
-  header .rev { font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .tally { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; font-size: 12px; color: var(--dim); }
-  .tally b { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; width: 100%; }
-  .controls label { font-size: 12px; color: var(--dim); display: inline-flex; gap: 5px; align-items: center; }
-  input[type="search"] {
-    font: 13px var(--ui); padding: 5px 9px; border: 1px solid var(--line);
-    border-radius: 6px; background: var(--ground); color: var(--ink); min-width: 160px; flex: 1 1 160px;
-  }
-  .views { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .wordmark { font-family: var(--display); font-size: 26px; line-height: 1; }
+  .rev { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .views { display: inline-flex; gap: 2px; padding: 3px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; }
   .views button {
-    font: 12px var(--ui); padding: 5px 11px; border: 0; background: var(--ground);
-    color: var(--dim); cursor: pointer;
+    font-size: 12px; font-weight: 500; height: 28px; padding: 0 14px;
+    border: 0; border-radius: 6px; background: none; color: var(--dim); cursor: pointer;
   }
-  .views button[aria-pressed="true"] { background: var(--accent); color: #fff; }
-  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-  main { display: grid; grid-template-columns: minmax(320px, 1.05fr) minmax(300px, 1fr); height: calc(100% - 96px); }
-  main.graph { grid-template-columns: minmax(0, 1fr) 340px; }
-  @media (max-width: 860px) { main, main.graph { grid-template-columns: 1fr; } }
-  #tree { overflow: auto; padding: 8px 0 40px; border-right: 1px solid var(--line); }
-  #graph { position: relative; overflow: hidden; border-right: 1px solid var(--line); background: var(--ground); }
-  #detail { overflow: auto; padding: 18px 20px 60px; }
-
-  .row {
-    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-    padding: 3px 14px 3px 0; border: 0; background: none; color: inherit;
-    font: 13px var(--ui); cursor: pointer;
+  .views button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+  .find { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; flex: 0 1 240px; }
+  .find input { border: 0; background: none; color: inherit; font-size: 12.5px; width: 100%; min-width: 0; }
+  .find input::placeholder { color: var(--faint); }
+  .tally { display: flex; gap: 13px; font-size: 12px; color: var(--dim); }
+  .tally span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .tally i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--ground);
+    font-size: 12.5px; color: var(--dim); cursor: pointer; white-space: nowrap;
   }
-  .row:hover { background: var(--mark); }
-  .row[aria-selected="true"] { background: var(--mark); box-shadow: inset 3px 0 0 var(--accent); }
-  .fold { width: 14px; flex: none; color: var(--faint); font-size: 10px; text-align: center; }
-  .glyph { flex: none; width: 12px; text-align: center; font-family: var(--mono); font-weight: 600; }
-  .name { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .where { color: var(--faint); font-size: 11px; margin-left: auto; white-space: nowrap; padding-left: 10px; }
-  .added .glyph, .added .name { color: var(--added); }
-  .removed .glyph { color: var(--removed); }
-  .removed .name { color: var(--removed); text-decoration: line-through; text-decoration-thickness: 1px; }
-  .signature .glyph { color: var(--iface); }
+  .verdict i { width: 3px; height: 14px; border-radius: 2px; background: var(--added); }
+  .verdict.look { background: var(--iface-soft); border-color: var(--iface-line); color: var(--iface); }
+  .verdict.look i { background: var(--iface); }
+  .verdict.bad { background: var(--removed-soft); border-color: var(--removed); color: var(--removed); }
+  .verdict.bad i { background: var(--removed); }
+  .ghostbtn {
+    height: 32px; padding: 0 14px; font-size: 12.5px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--panel); color: var(--dim); cursor: pointer;
+  }
+  .ghostbtn:hover { color: var(--ink); }
+  .toggles { display: flex; gap: 12px; }
+  .toggles label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap; }
 
-  /* the graph */
-  svg.map { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  main { flex-grow: 1; display: flex; min-height: 0; }
+  #stage { position: relative; flex-grow: 1; min-width: 0; background: var(--ground); overflow: hidden; }
+
+  /* ---------- graph ---------- */
+  .lanes { position: absolute; left: 0; right: 0; top: 0; height: 32px; background: var(--sunk); border-bottom: 1px solid var(--rule); z-index: 2; pointer-events: none; overflow: hidden; }
+  .lanes span { position: absolute; top: 10px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  svg.map { position: absolute; left: 0; top: 32px; right: 0; bottom: 0; width: 100%; height: calc(100% - 32px); cursor: grab; touch-action: none; }
   svg.map.dragging { cursor: grabbing; }
-  .edge { fill: none; stroke: var(--body); stroke-width: 1.2; }
-  .edge.iface { stroke: var(--iface); stroke-width: 1.6; }
+  .frame { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; rx: 12; }
+  .frame-label { font-family: var(--mono); font-size: 10px; fill: var(--faint); }
+  .edge { fill: none; stroke: var(--ghost); stroke-width: 1.3; }
+  .edge.iface { stroke: var(--iface); stroke-width: 1.7; }
+  .edge.body { stroke-dasharray: 4 4; }
   .edge.back { stroke: var(--removed); stroke-dasharray: 5 3; }
-  .edge.body { stroke-dasharray: 3 3; }
-  .edge.fade { opacity: .12; }
+  .edge.fade { opacity: .18; }
   .edge.lit { stroke-width: 2.4; }
-  .node rect {
-    fill: var(--panel); stroke: var(--line); stroke-width: 1.5; rx: 5;
-  }
-  .node text { font-family: var(--mono); font-size: 11px; fill: var(--ink); dominant-baseline: middle; }
-  .node .tag { font-family: var(--ui); font-size: 9px; fill: var(--faint); }
-  .node.added rect { stroke: var(--added); }
-  .node.removed rect { stroke: var(--removed); stroke-dasharray: 4 2; }
-  .node.signature rect { stroke: var(--iface); stroke-width: 2.2; }
+  .node rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.3; rx: 9; }
+  .node.added rect.box { stroke: var(--added); }
+  .node.signature rect.box { stroke: var(--iface); stroke-width: 1.8; }
+  .node.removed rect.box { stroke: var(--removed); stroke-dasharray: 5 3; }
+  .node .glyph { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .node .label { font-family: var(--mono); font-size: 12.5px; fill: var(--ink); }
+  .node .lines { font-family: var(--mono); font-size: 10.5px; fill: var(--faint); }
+  .node .entry { fill: var(--accent); }
+  .node.added .label { fill: var(--added); }
+  .node.removed .label { fill: var(--removed); }
   .node { cursor: pointer; }
-  .node.fade { opacity: .22; }
-  .node.sel rect { stroke: var(--accent); stroke-width: 2.6; fill: var(--mark); }
-  .node rect.entry { fill: var(--accent); stroke: none; }
-  .legend {
-    position: absolute; left: 12px; bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap;
-    background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line);
-    border-radius: 7px; padding: 7px 10px; font-size: 11px; color: var(--dim);
-  }
-  .legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .legend i { width: 18px; height: 0; border-top-width: 2px; border-top-style: solid; display: inline-block; }
-  .zoomers { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
-  .zoomers button {
-    font: 12px var(--ui); width: 28px; height: 26px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--dim); border-radius: 6px; cursor: pointer;
-  }
-  .zoomers button.wide { width: auto; padding: 0 9px; }
+  .node.fade { opacity: .25; }
+  .node.sel rect.box { stroke: var(--accent); stroke-width: 2.4; fill: var(--mark); }
+  .carries rect { fill: var(--iface-soft); stroke: var(--iface-line); rx: 8; }
+  .carries text { font-family: var(--ui); font-size: 9.5px; fill: var(--iface); }
 
-  .sec { font: 600 11px/1 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 22px 0 8px; }
-  #detail h2 { font: 600 16px/1.3 var(--ui); margin: 0 0 2px; word-break: break-word; }
-  pre.head {
-    font-family: var(--mono); font-size: 12.5px; line-height: 1.55; margin: 12px 0 0;
-    padding: 10px 12px; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 7px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  .overlay { position: absolute; display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; font-size: 11px; color: var(--dim); }
+  .legend { left: 16px; bottom: 16px; }
+  .legend i { width: 20px; height: 0; border-top-width: 2px; display: inline-block; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .zoom { right: 16px; top: 48px; padding: 4px; gap: 4px; }
+  .zoom button { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--dim); font-size: 13px; cursor: pointer; }
+  .zoom button.wide { width: auto; padding: 0 9px; font-size: 11.5px; }
+  .zoom button:hover { background: var(--mark); color: var(--ink); }
+  #mini { position: absolute; right: 16px; bottom: 16px; width: 186px; height: 112px; padding: 6px; overflow: hidden; }
+  #mini svg { display: block; width: 100%; height: 100%; }
+  .mini-dot { fill: var(--ghost); }
+  .mini-dot.hot { fill: var(--iface); }
+  .mini-view { fill: none; stroke: var(--accent); stroke-width: 6; }
+
+  /* ---------- reading ---------- */
+  #reading { position: absolute; inset: 0; overflow: auto; padding: 24px 28px 60px; }
+  .head-line { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .head-line h2 { font-family: var(--display); font-weight: 400; font-size: 22px; margin: 0; }
+  .head-line p { margin: 0; font-size: 12.5px; color: var(--dim); }
+  .thread { border: 1px solid var(--line); border-radius: 12px; background: var(--sunk); margin-bottom: 12px; overflow: hidden; }
+  .thread > .top { display: flex; align-items: center; gap: 12px; padding: 11px 14px; background: var(--panel); cursor: pointer; }
+  .thread.open > .top { border-bottom: 1px solid var(--rule); }
+  .num { width: 22px; height: 22px; flex: none; border-radius: 6px; background: var(--mark); color: var(--dim); font-family: var(--mono); font-size: 11.5px; display: flex; align-items: center; justify-content: center; }
+  .thread.open .num { background: var(--accent-soft); color: var(--accent); }
+  .thread .name { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  .thread .about { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prog { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+  .bar { width: 74px; height: 5px; border-radius: 3px; background: var(--mark); overflow: hidden; display: inline-block; }
+  .bar i { display: block; height: 5px; background: var(--added); }
+  .rows { padding: 6px 0 8px; }
+  .r { display: flex; align-items: center; gap: 9px; padding: 6px 14px; position: relative; cursor: pointer; }
+  .r:hover { background: var(--mark); }
+  .r.sel { background: var(--mark); box-shadow: inset 3px 0 0 var(--accent); }
+  .r .tick { width: 16px; height: 16px; flex: none; border-radius: 5px; border: 1px solid var(--line); background: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .r.read .tick { background: var(--added); border-color: var(--added); }
+  .r.read .nm { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--ghost); }
+  .r .g { font-family: var(--mono); font-size: 12.5px; width: 10px; text-align: center; }
+  .r .nm { font-family: var(--mono); font-size: 13px; }
+  .r .where { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .r .lines { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
+  .pill { padding: 2px 7px; border-radius: 999px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+  .pill.iface { background: var(--iface-soft); color: var(--iface); }
+  .pill.bodyf { background: var(--mark); color: var(--faint); }
+  .pill.new { background: var(--accent-soft); color: var(--accent); }
+  .pill.carries { background: var(--iface-soft); color: var(--iface); text-transform: none; letter-spacing: 0; }
+  .elbow { position: absolute; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-bottom-left-radius: 5px; width: 10px; pointer-events: none; }
+  .r.added .g, .r.added .nm { color: var(--added); }
+  .r.removed .g, .r.removed .nm { color: var(--removed); }
+  .r.signature .g { color: var(--iface); }
+  .r.body .g { color: var(--ghost); }
+  .aside { display: flex; align-items: center; gap: 10px; margin: 22px 0 10px; font-size: 12px; color: var(--faint); }
+  .aside i { height: 1px; flex-grow: 1; background: var(--rule); }
+  .files { list-style: none; margin: 0; padding: 0 2px; font-family: var(--mono); font-size: 12px; color: var(--dim); columns: 2; column-gap: 28px; }
+  .files li { padding: 2px 0; break-inside: avoid; }
+  .files b { font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* ---------- panel ---------- */
+  #panel { width: 400px; flex: none; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+  #panel .scroll { overflow: auto; flex-grow: 1; }
+  .ptop { padding: 20px 20px 16px; border-bottom: 1px solid var(--rule); }
+  .ptop h2 { margin: 0; font-family: var(--mono); font-size: 17px; font-weight: 500; word-break: break-all; }
+  .ptop .path { margin-top: 5px; font-family: var(--mono); font-size: 11.5px; color: var(--dim); word-break: break-all; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); font-size: 11px; color: var(--dim); white-space: nowrap; }
+  .chip.signature { color: var(--iface); background: var(--iface-soft); border-color: var(--iface-line); }
+  .chip.added { color: var(--added); border-color: currentColor; }
+  .chip.removed { color: var(--removed); border-color: currentColor; }
+  .says { margin: 16px 20px 0; padding: 12px 14px; border-radius: 9px; background: var(--iface-soft); border-left: 3px solid var(--iface); font-size: 12.5px; line-height: 1.55; color: var(--iface); }
+  .says.calm { background: var(--mark); border-left-color: var(--ghost); color: var(--dim); }
+  .says code { font-family: var(--mono); }
+  .sec { padding: 18px 20px 8px; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+  .diff { margin: 0 20px; border: 1px solid var(--line); border-radius: 9px; background: var(--ground); overflow: auto; max-height: 44vh; font-family: var(--mono); font-size: 12px; line-height: 1.6; padding: 4px 0; }
+  .dl { display: flex; padding: 0 10px; white-space: pre; }
+  .dl .ln { width: 34px; flex: none; text-align: right; color: var(--ghost); font-variant-numeric: tabular-nums; }
+  .dl .tx { padding-left: 12px; color: var(--dim); }
+  .dl.add { background: var(--added-soft); } .dl.add .tx { color: var(--added); }
+  .dl.del { background: var(--removed-soft); } .dl.del .tx { color: var(--removed); }
+  .uses { padding: 0 12px; display: flex; flex-direction: column; gap: 1px; }
+  .uses button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
+  .uses button:hover { background: var(--mark); }
+  .uses .nm { font-family: var(--mono); font-size: 12.5px; }
+  .uses .g { font-family: var(--mono); font-size: 12px; width: 10px; text-align: center; }
+  .uses .far { margin-left: auto; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  .uses .far.iface { color: var(--iface); }
+  .pfoot { padding: 14px 20px; border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
+  .mark-read { flex-grow: 1; height: 38px; border: 0; border-radius: 8px; background: var(--added); color: var(--ground); font-size: 12.5px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  .mark-read.done { background: var(--mark); color: var(--dim); }
+  .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .empty { color: var(--faint); font-size: 12.5px; padding: 0 20px; margin: 0; }
+  .hint { color: var(--dim); font-size: 12.5px; line-height: 1.6; padding: 20px; }
+  .hint code { font-family: var(--mono); background: var(--mark); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---------- score ---------- */
+  .veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  .sheet { width: min(960px, 92%); max-height: 88%; background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
+  .sheet .top { padding: 24px 28px 20px; border-bottom: 1px solid var(--rule); display: flex; align-items: flex-start; gap: 20px; }
+  .sheet h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 29px; line-height: 1.1; }
+  .sheet .why { margin: 7px 0 0; font-size: 12.5px; color: var(--dim); max-width: 60ch; line-height: 1.6; }
+  .sheet .totals { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--faint); white-space: nowrap; }
+  .sheet .body { overflow: auto; padding: 4px 28px 8px; }
+  .m { display: flex; align-items: center; gap: 14px; padding: 12px 0 10px; border-top: 1px solid var(--rule); }
+  .m.first { border-top: 0; }
+  .m .flag { width: 4px; height: 28px; border-radius: 2px; flex: none; background: var(--added); }
+  .m.look .flag { background: var(--iface); } .m.bad .flag { background: var(--removed); }
+  .m .mname { width: 94px; flex: none; font-size: 13px; font-weight: 500; }
+  .m .mval { width: 150px; flex: none; font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+  .m.look .mval { color: var(--iface); } .m.bad .mval { color: var(--removed); }
+  .m .scale { width: 150px; flex: none; height: 6px; border-radius: 3px; position: relative; }
+  .m .scale i { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; background: var(--ink); }
+  .m .mnote { flex-grow: 1; font-size: 12.5px; color: var(--dim); }
+  .advice { padding: 0 0 14px 112px; font-size: 12.5px; line-height: 1.6; color: var(--ink); opacity: .82; max-width: 78ch; }
+  .sheet .foot { padding: 13px 28px; border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 16px; font-size: 11.5px; color: var(--faint); }
+  .sheet .foot .keys { display: flex; gap: 12px; }
+  .sheet .foot .keys span { display: inline-flex; align-items: center; gap: 6px; }
+  .sheet .foot .keys i { width: 16px; height: 5px; border-radius: 3px; display: inline-block; }
+  .sheet .close { margin-left: auto; }
+
+  #drop { margin: 14vh auto; max-width: 54ch; padding: 34px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; background: var(--panel); }
+  #drop h2 { margin: 0 0 10px; font-family: var(--display); font-weight: 400; font-size: 24px; }
+  @media (max-width: 900px) {
+    main { flex-direction: column; }
+    #panel { width: auto; border-left: 0; border-top: 1px solid var(--line); max-height: 46%; }
   }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .chip {
-    font: 11px/1 var(--ui); padding: 4px 7px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
-  }
-  .chip.on { border-color: currentColor; }
-  .chip.added { color: var(--added); } .chip.removed { color: var(--removed); }
-  .chip.signature { color: var(--iface); } .chip.root { color: var(--accent); }
-  .path { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-top: 6px; word-break: break-all; }
-  .edges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .edges button {
-    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-    background: none; border: 0; padding: 4px 6px; border-radius: 5px; color: inherit;
-    font: 12.5px var(--mono); cursor: pointer;
-  }
-  .edges button:hover { background: var(--mark); }
-  .diff {
-    font-family: var(--mono); font-size: 12px; line-height: 1.5; margin-top: 8px;
-    border: 1px solid var(--line); border-radius: 7px; background: var(--panel);
-    overflow: auto; max-height: 52vh; padding: 6px 0;
-  }
-  .dl { display: flex; gap: 10px; padding: 0 10px; white-space: pre; }
-  .dl .ln { color: var(--faint); min-width: 4ch; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
-  .dl .tx { flex: 1; }
-  .dl.add { background: color-mix(in srgb, var(--added) 14%, transparent); }
-  .dl.del { background: color-mix(in srgb, var(--removed) 14%, transparent); }
-  .dl.add .tx { color: var(--added); }
-  .dl.del .tx { color: var(--removed); }
-  .facet { font: 10px/1 var(--ui); letter-spacing: .04em; text-transform: uppercase; flex: none; }
-  .facet.iface { color: var(--iface); }
-  .facet.body { color: var(--body); }
-  .new { color: var(--accent); font-size: 11px; flex: none; }
-  .empty { color: var(--faint); font-size: 12.5px; }
-  .hint { color: var(--dim); font-size: 12.5px; max-width: 60ch; }
-  .hint code { font-family: var(--mono); font-size: 12px; background: var(--mark); padding: 1px 4px; border-radius: 4px; }
-  #drop {
-    margin: 60px auto; max-width: 52ch; padding: 32px; text-align: center;
-    border: 1px dashed var(--line); border-radius: 12px; background: var(--panel);
-  }
-  #drop h2 { font-size: 15px; margin: 0 0 8px; }
-  .files { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .files li { padding: 2px 0; display: flex; gap: 10px; }
-  .files .n { font-variant-numeric: tabular-nums; color: var(--faint); }
 </style>
 </head>
 <body>
@@ -183,7 +270,8 @@
 
   var GLYPH = { added: "+", removed: "−", signature: "~", body: "·" };
   var WORD = { added: "added", removed: "removed", signature: "interface changed", body: "body only" };
-  var NH = 28, GAP = 72, ROW = 42, MEASURE = null;
+  var NH = 30, ROW = 44, GAP = 84, PAD = 26;
+  var COLOUR = { added: "var(--added)", removed: "var(--removed)", signature: "var(--iface)", body: "var(--ghost)" };
 
   function h(tag, cls, text) {
     var n = document.createElement(tag);
@@ -196,27 +284,28 @@
     if (cls) n.setAttribute("class", cls);
     return n;
   }
-  function baseName(p) { return p.split("/").pop(); }
-  // A box is as wide as the name in it: a truncated name is not a name, and
-  // reading them is what the drawing is for.
+  function attr(n, o) { for (var k in o) n.setAttribute(k, o[k]); return n; }
+  function label(d) { return d.class ? d.class + "." + d.name : d.name; }
+  function cut(t, n) { return t.length > n ? t.slice(0, n - 1) + "…" : t; }
+  var MEASURE = null;
   function textW(t) {
     if (!MEASURE) {
       MEASURE = document.createElement("canvas").getContext("2d");
-      MEASURE.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+      MEASURE.font = "12.5px 'IBM Plex Mono', ui-monospace, Menlo, monospace";
     }
     return MEASURE.measureText(t).width;
   }
-  function label(d) { return d.class ? d.class + "." + d.name : d.name; }
-  function cut(t, n) { return t.length > n ? t.slice(0, n - 1) + "…" : t; }
+  function tickMark() {
+    var v = s("svg"); attr(v, { width: 10, height: 10, viewBox: "0 0 16 16", fill: "none" });
+    var p = s("path"); attr(p, { d: "M3 8.5 6.5 12 13 4.5", stroke: "var(--ground)", "stroke-width": 2.6, "stroke-linecap": "round", "stroke-linejoin": "round" });
+    v.appendChild(p); return v;
+  }
 
   if (!data) { showDrop(); return; }
-  // A thrown error used to leave an empty canvas and no word about why. Say it
-  // on the page: this file is read by people who cannot open a console.
   try { start(data); } catch (err) {
     var box = h("div", "hint");
-    box.style.cssText = "margin:40px auto;max-width:60ch;padding:20px;border:1px solid var(--line);border-radius:10px";
     box.appendChild(h("b", null, "The page could not draw this graph."));
-    box.appendChild(h("pre", "head", String((err && err.stack) || err)));
+    box.appendChild(h("pre", null, String((err && err.stack) || err)));
     document.body.appendChild(box);
   }
 
@@ -225,7 +314,7 @@
     var d = h("div"); d.id = "drop";
     d.appendChild(h("h2", null, "Drop a seam graph here"));
     var p = h("p", "hint");
-    p.innerHTML = "Run <code>seam main... --json &gt; graph.json</code> and drop the file on this page, or paste the JSON with ⌘V.";
+    p.innerHTML = "Run <code>seam main... --json &gt; graph.json</code> and drop the file on this page, or paste the JSON.";
     d.appendChild(p);
     document.body.appendChild(d);
     document.addEventListener("dragover", function (e) { e.preventDefault(); });
@@ -237,18 +326,17 @@
       r.onload = function () { load(r.result); };
       r.readAsText(f);
     });
-    document.addEventListener("paste", function (e) {
-      load((e.clipboardData || window.clipboardData).getData("text"));
-    });
+    document.addEventListener("paste", function (e) { load((e.clipboardData || window.clipboardData).getData("text")); });
     function load(text) {
-      var g; try { g = JSON.parse(text); } catch (err) { d.appendChild(h("p", "hint", "That is not JSON seam wrote.")); return; }
+      var g;
+      try { g = JSON.parse(text); } catch (err) { d.appendChild(h("p", "hint", "That is not JSON seam wrote.")); return; }
       d.remove(); document.body.style.overflow = "hidden"; start(g);
     }
   }
 
   function start(g) {
     document.title = "seam · " + (g.rev || "a change");
-    var defs = g.definitions || [], edges = g.edges || [], files = g.files || [];
+    var defs = g.definitions || [], edges = g.edges || [], files = g.files || [], score = g.score || null;
     var byId = {}, out = {}, into = {}, members = {};
     defs.forEach(function (d) {
       byId[d.id] = d;
@@ -259,38 +347,70 @@
       (out[e.from] = out[e.from] || []).push(e);
       (into[e.to] = into[e.to] || []).push(e);
     });
+    var tops = defs.filter(function (d) { return !d.class; });
 
-    var state = { sel: null, open: {}, q: "", hideBody: false, hideAside: false, view: "graph" };
+    // What you have read, kept for this change in this browser alone. A viewer
+    // that marks a whole file read because you read one function in it is
+    // lying to you, which is why this counts definitions.
+    var KEY = "seam:read:" + (g.head || g.rev || "");
+    var read = {};
+    try { read = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { read = {}; }
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (e) {} }
 
+    var state = { sel: null, view: "graph", q: "", hideBody: false, hideAside: false, open: {}, score: false };
+    var fit = true, view = { k: 1, x: 0, y: 0 }, world = null, svg = null, lastLayout = null, dragged = false;
+
+    // ---------- chrome ----------
     var head = h("header");
-    head.appendChild(h("h1", null, "seam"));
+    head.appendChild(h("span", "wordmark", "seam"));
     head.appendChild(h("span", "rev", g.rev || ""));
+
+    var views = h("div", "views");
+    var bGraph = h("button", null, "Graph"), bRead = h("button", null, "Reading order");
+    bGraph.type = bRead.type = "button";
+    bGraph.addEventListener("click", function () { state.view = "graph"; fit = true; draw(); });
+    bRead.addEventListener("click", function () { state.view = "reading"; draw(); });
+    views.appendChild(bGraph); views.appendChild(bRead);
+    head.appendChild(views);
+
+    var find = h("label", "find");
+    var mag = s("svg"); attr(mag, { width: 13, height: 13, viewBox: "0 0 16 16", fill: "none", stroke: "var(--faint)", "stroke-width": 1.6 });
+    var c1 = s("circle"); attr(c1, { cx: 7, cy: 7, r: 4.5 }); mag.appendChild(c1);
+    var l1 = s("path"); attr(l1, { d: "M10.5 10.5 14 14" }); mag.appendChild(l1);
+    find.appendChild(mag);
+    var search = document.createElement("input");
+    search.type = "search"; search.id = "seam-find"; search.placeholder = "Filter by name or file";
+    search.addEventListener("input", function () { state.q = search.value.toLowerCase(); fit = true; draw(); });
+    find.appendChild(search);
+    head.appendChild(find);
+
     var tally = h("div", "tally");
-    ["added", "signature", "body", "removed"].forEach(function (k) {
-      var n = defs.filter(function (d) { return d.change === k; }).length;
+    [["signature", "interfaces"], ["added", "added"], ["body", "bodies"], ["removed", "removed"]].forEach(function (k) {
+      var n = defs.filter(function (d) { return d.change === k[0]; }).length;
       if (!n) return;
       var sp = h("span");
-      sp.appendChild(h("b", null, String(n)));
-      sp.appendChild(document.createTextNode(" " + WORD[k]));
+      var i = h("i"); i.style.background = COLOUR[k[0]];
+      sp.appendChild(i);
+      sp.appendChild(document.createTextNode(n + " " + k[1]));
       tally.appendChild(sp);
     });
     head.appendChild(tally);
 
-    var controls = h("div", "controls");
-    var views = h("div", "views");
-    var bGraph = h("button", null, "graph"), bTree = h("button", null, "tree");
-    bGraph.type = bTree.type = "button";
-    bGraph.addEventListener("click", function () { state.view = "graph"; draw(); });
-    bTree.addEventListener("click", function () { state.view = "tree"; draw(); });
-    views.appendChild(bGraph); views.appendChild(bTree);
-    controls.appendChild(views);
-    var search = document.createElement("input");
-    search.type = "search"; search.id = "seam-search"; search.placeholder = "filter by name or path";
-    search.addEventListener("input", function () { state.q = search.value.toLowerCase(); fit = true; draw(); });
-    controls.appendChild(search);
-    controls.appendChild(toggle("hideBody", "only what changed shape"));
-    controls.appendChild(toggle("hideAside", "source files only"));
-    head.appendChild(controls);
+    var right = h("div", "right");
+    var progress = h("div", "prog");
+    right.appendChild(progress);
+    if (score) {
+      var v = h("span", "verdict " + (score.worst === 2 ? "bad" : score.worst === 1 ? "look" : ""));
+      v.appendChild(h("i"));
+      v.appendChild(document.createTextNode(score.verdict));
+      v.addEventListener("click", function () { state.score = true; draw(); });
+      right.appendChild(v);
+    }
+    var tog = h("div", "toggles");
+    tog.appendChild(toggle("hideBody", "only what changed shape"));
+    tog.appendChild(toggle("hideAside", "source only"));
+    right.appendChild(tog);
+    head.appendChild(right);
     document.body.appendChild(head);
 
     function toggle(key, text) {
@@ -302,10 +422,9 @@
     }
 
     var main = h("main");
-    var tree = h("div"); tree.id = "tree";
-    var map = h("div"); map.id = "graph";
-    var detail = h("div"); detail.id = "detail";
-    main.appendChild(map); main.appendChild(tree); main.appendChild(detail);
+    var stage = h("div"); stage.id = "stage";
+    var panel = h("div"); panel.id = "panel";
+    main.appendChild(stage); main.appendChild(panel);
     document.body.appendChild(main);
 
     function shown(d) {
@@ -314,25 +433,20 @@
       if (state.q && (d.id + " " + (d.head || "")).toLowerCase().indexOf(state.q) < 0) return false;
       return true;
     }
+    function ifaceIn(id) { return (into[id] || []).filter(function (e) { return e.facet === "iface"; }); }
 
-    // ---- the graph: layered left to right, roots on the left, what they use
-    // to the right. Cycles are cut for the layout and the cut edge is drawn
-    // dashed, so a knot is visible rather than hidden by the drawing.
-    var fit = true, view = { k: 1, x: 0, y: 0 }, svg, world;
-
+    // ---------- layout: layered, left to right ----------
     function layout() {
-      var ns = defs.filter(function (d) { return !d.class && shown(d); });
+      var ns = tops.filter(shown);
       var ids = {}; ns.forEach(function (d) { ids[d.id] = true; });
       var E = edges.filter(function (e) { return ids[e.from] && ids[e.to] && e.from !== e.to; });
       var o = {}, i = {};
       E.forEach(function (e) { (o[e.from] = o[e.from] || []).push(e); (i[e.to] = i[e.to] || []).push(e); });
 
-      // cut cycles: an edge onto a node still open on the stack is a back edge
       var mark = {}, back = {};
       ns.forEach(function (d) {
         if (mark[d.id]) return;
-        var stack = [[d.id, 0]];
-        mark[d.id] = 1;
+        var stack = [[d.id, 0]]; mark[d.id] = 1;
         while (stack.length) {
           var top = stack[stack.length - 1], id = top[0], list = o[id] || [];
           if (top[1] >= list.length) { mark[id] = 2; stack.pop(); continue; }
@@ -341,12 +455,10 @@
           if (!mark[e.to]) { mark[e.to] = 1; stack.push([e.to, 0]); }
         }
       });
-      var F = E.filter(function (e) { return !back[e.from + ">" + e.to]; });
 
-      // layers: longest path, over the acyclic part
       var layer = {}, indeg = {};
       ns.forEach(function (d) { layer[d.id] = 0; indeg[d.id] = 0; });
-      F.forEach(function (e) { indeg[e.to]++; });
+      E.forEach(function (e) { if (!back[e.from + ">" + e.to]) indeg[e.to]++; });
       var q = ns.filter(function (d) { return !indeg[d.id]; }).map(function (d) { return d.id; });
       while (q.length) {
         var n = q.shift();
@@ -357,12 +469,10 @@
         });
       }
 
-      // components, so unrelated stories sit apart instead of interleaved
       var comp = {}, cn = 0;
       ns.forEach(function (d) {
         if (comp[d.id] != null) return;
-        var c = cn++, stack = [d.id];
-        comp[d.id] = c;
+        var c = cn++, stack = [d.id]; comp[d.id] = c;
         while (stack.length) {
           var id = stack.pop();
           ((o[id] || []).concat(i[id] || [])).forEach(function (e) {
@@ -372,9 +482,7 @@
         }
       });
 
-      // order inside each layer: reading order first, then two barycentre
-      // passes so the arrows cross as little as cheaply possible
-      var rows = {};
+      var rows = {}, idx = {};
       ns.slice().sort(function (a, b) {
         if (comp[a.id] !== comp[b.id]) return comp[a.id] - comp[b.id];
         if (a.path !== b.path) return a.path < b.path ? -1 : 1;
@@ -383,14 +491,7 @@
         var k = comp[d.id] + ":" + layer[d.id];
         (rows[k] = rows[k] || []).push(d);
       });
-      var idx = {};
       Object.keys(rows).forEach(function (k) { rows[k].forEach(function (d, n) { idx[d.id] = n; }); });
-      for (var pass = 0; pass < 3; pass++) {
-        Object.keys(rows).forEach(function (k) {
-          rows[k].sort(function (a, b) { return bary(a, pass % 2 === 0 ? i : o) - bary(b, pass % 2 === 0 ? i : o); })
-            .forEach(function (d, n) { idx[d.id] = n; });
-        });
-      }
       function bary(d, adj) {
         var list = adj[d.id] || [];
         if (!list.length) return idx[d.id];
@@ -398,9 +499,14 @@
         list.forEach(function (e) { t += idx[e.from === d.id ? e.to : e.from] || 0; });
         return t / list.length;
       }
+      for (var pass = 0; pass < 3; pass++) {
+        Object.keys(rows).forEach(function (k) {
+          rows[k].sort(function (a, b) { return bary(a, pass % 2 === 0 ? i : o) - bary(b, pass % 2 === 0 ? i : o); })
+            .forEach(function (d, n) { idx[d.id] = n; });
+        });
+      }
 
-      // pack: each component under the one before it
-      var top = {}, y = {}, offset = 0;
+      var top = {}, offset = 0;
       for (var c = 0; c < cn; c++) {
         var tallest = 0;
         Object.keys(rows).forEach(function (k) {
@@ -410,51 +516,89 @@
         top[c] = offset;
         offset += tallest + 1;
       }
+
       var lab = {}, W = {}, colw = {}, deepest = 0;
       ns.forEach(function (d) {
         lab[d.id] = cut(label(d), 44);
-        W[d.id] = Math.max(104, Math.ceil(textW(lab[d.id]) + 38));
+        W[d.id] = Math.max(126, Math.ceil(textW(lab[d.id]) + 82));
         if (!colw[layer[d.id]] || W[d.id] > colw[layer[d.id]]) colw[layer[d.id]] = W[d.id];
         if (layer[d.id] > deepest) deepest = layer[d.id];
       });
-      var colx = {}, acc = 0;
-      for (var L = 0; L <= deepest; L++) { colx[L] = acc; acc += (colw[L] || 104) + GAP; }
+      var colx = {}, acc = PAD;
+      for (var L = 0; L <= deepest; L++) { colx[L] = acc; acc += (colw[L] || 126) + GAP; }
+
       var placed = ns.map(function (d) {
-        return {
-          def: d, w: W[d.id], label: lab[d.id],
-          x: colx[layer[d.id]],
-          y: (top[comp[d.id]] + idx[d.id]) * ROW
-        };
+        return { def: d, w: W[d.id], label: lab[d.id], layer: layer[d.id],
+                 x: colx[layer[d.id]], y: PAD + (top[comp[d.id]] + idx[d.id]) * ROW };
       });
       var at = {}; placed.forEach(function (p) { at[p.def.id] = p; });
-      return { nodes: placed, edges: E, at: at, back: back };
+
+      // The box a definition lives in: its file, drawn behind it, where that
+      // file has more than one here and the frame does not run into one drawn
+      // already. A frame that overlaps another says less than no frame at all.
+      var groups = {}, frames = [];
+      placed.forEach(function (p) { (groups[p.def.path] = groups[p.def.path] || []).push(p); });
+      Object.keys(groups).sort().forEach(function (path) {
+        var ps = groups[path];
+        if (ps.length < 2) return;
+        var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+        ps.forEach(function (p) {
+          x1 = Math.min(x1, p.x); y1 = Math.min(y1, p.y);
+          x2 = Math.max(x2, p.x + p.w); y2 = Math.max(y2, p.y + NH);
+        });
+        var f = { x: x1 - 14, y: y1 - 16, w: (x2 - x1) + 28, h: (y2 - y1) + 30, label: path };
+        var clash = frames.some(function (o2) {
+          return !(f.x + f.w < o2.x || o2.x + o2.w < f.x || f.y + f.h < o2.y || o2.y + o2.h < f.y);
+        });
+        if (!clash) frames.push(f);
+      });
+
+      return { nodes: placed, edges: E, at: at, back: back, frames: frames, colx: colx,
+               deepest: deepest, box: { w: acc, h: PAD * 2 + offset * ROW } };
     }
 
+    // ---------- the graph ----------
     function drawGraph() {
-      map.textContent = "";
-      var L = layout();
+      stage.textContent = "";
+      var L = lastLayout = layout();
       if (!L.nodes.length) {
-        var p = h("p", "empty", "Nothing matches that filter.");
-        p.style.padding = "20px";
-        map.appendChild(p);
+        var none = h("p", "empty", "Nothing matches that filter.");
+        none.style.padding = "24px";
+        stage.appendChild(none);
         return;
       }
+
+      var lanes = h("div", "lanes");
+      var names = ["Entry points", "What they use", "And what that uses"];
+      for (var i = 0; i <= L.deepest && i < 10; i++) {
+        var t = h("span", null, i < names.length ? names[i] : "further in");
+        t.setAttribute("data-lane", String(i));
+        lanes.appendChild(t);
+      }
+      stage.appendChild(lanes);
+
       svg = s("svg", "map");
       world = s("g");
       var defsEl = s("defs");
-      [["arrow", "var(--body)"], ["arrow-i", "var(--iface)"], ["arrow-b", "var(--removed)"]].forEach(function (a) {
+      [["arrow", "var(--ghost)"], ["arrow-i", "var(--iface)"], ["arrow-b", "var(--removed)"]].forEach(function (a) {
         var m = s("marker");
-        m.setAttribute("id", a[0]); m.setAttribute("viewBox", "0 0 8 8");
-        m.setAttribute("refX", "7"); m.setAttribute("refY", "4");
-        m.setAttribute("markerWidth", "6"); m.setAttribute("markerHeight", "6");
-        m.setAttribute("orient", "auto-start-reverse");
-        var path = s("path");
-        path.setAttribute("d", "M0,1 L7,4 L0,7 z");
-        path.setAttribute("fill", a[1]);
+        attr(m, { id: a[0], viewBox: "0 0 8 8", refX: 7, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+        var path = s("path"); attr(path, { d: "M0,1 L7,4 L0,7 z", fill: a[1] });
         m.appendChild(path); defsEl.appendChild(m);
       });
       svg.appendChild(defsEl);
       svg.appendChild(world);
+
+      var frames = s("g"); world.appendChild(frames);
+      L.frames.forEach(function (f) {
+        var r = s("rect", "frame");
+        attr(r, { x: f.x, y: f.y, width: f.w, height: f.h });
+        frames.appendChild(r);
+        var t2 = s("text", "frame-label");
+        attr(t2, { x: f.x + 12, y: f.y - 5 });
+        t2.textContent = f.label;
+        frames.appendChild(t2);
+      });
 
       var lit = state.sel, near = {};
       if (lit) {
@@ -463,57 +607,119 @@
         (into[lit] || []).forEach(function (e) { near[e.from] = true; });
       }
 
+      // Elbows, not curves: a line you follow rather than guess at.
       var gEdges = s("g"); world.appendChild(gEdges);
       L.edges.forEach(function (e) {
         var a = L.at[e.from], b = L.at[e.to];
         if (!a || !b) return;
-        var isBack = L.back[e.from + ">" + e.to];
+        var isBack = !!L.back[e.from + ">" + e.to];
         var x1 = a.x + a.w, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
         if (isBack) { x1 = a.x; x2 = b.x + b.w; }
-        var dx = Math.max(30, Math.abs(x2 - x1) / 2);
+        var dir = isBack ? -1 : 1;
+        var mid = x1 + dir * Math.max(24, Math.abs(x2 - x1) / 2);
+        var r = 10, d;
+        if (Math.abs(y1 - y2) < 1) {
+          d = "M" + x1 + "," + y1 + " H" + x2;
+        } else {
+          var down = y2 > y1 ? 1 : -1;
+          d = "M" + x1 + "," + y1 +
+              " H" + (mid - dir * r) +
+              " Q" + mid + "," + y1 + " " + mid + "," + (y1 + down * r) +
+              " V" + (y2 - down * r) +
+              " Q" + mid + "," + y2 + " " + (mid + dir * r) + "," + y2 +
+              " H" + x2;
+        }
         var path = s("path", "edge " + e.facet + (isBack ? " back" : "") +
           (lit ? ((e.from === lit || e.to === lit) ? " lit" : " fade") : ""));
-        path.setAttribute("d", "M" + x1 + "," + y1 + " C" + (x1 + (isBack ? -dx : dx)) + "," + y1 +
-          " " + (x2 - (isBack ? -dx : dx)) + "," + y2 + " " + x2 + "," + y2);
-        path.setAttribute("marker-end", isBack ? "url(#arrow-b)" : (e.facet === "iface" ? "url(#arrow-i)" : "url(#arrow)"));
+        attr(path, { d: d, "marker-end": isBack ? "url(#arrow-b)" : (e.facet === "iface" ? "url(#arrow-i)" : "url(#arrow)") });
         gEdges.appendChild(path);
       });
 
       var gNodes = s("g"); world.appendChild(gNodes);
       L.nodes.forEach(function (p) {
-        var d = p.def;
+        var d = p.def, carries = ifaceIn(d.id).length;
         var gn = s("g", "node " + d.change + (state.sel === d.id ? " sel" : (lit && !near[d.id] ? " fade" : "")));
-        gn.setAttribute("transform", "translate(" + p.x + "," + p.y + ")");
-        var r = s("rect");
-        r.setAttribute("width", p.w); r.setAttribute("height", NH);
-        gn.appendChild(r);
+        attr(gn, { transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button", "aria-label": label(d) });
+        var box = s("rect", "box"); attr(box, { width: p.w, height: NH });
+        gn.appendChild(box);
         if (d.root) {
-          var bar = s("rect", "entry");
-          bar.setAttribute("width", 3); bar.setAttribute("height", NH - 8);
-          bar.setAttribute("x", 0); bar.setAttribute("y", 4);
+          var bar = s("rect", "entry"); attr(bar, { x: 0, y: 6, width: 3, height: NH - 12, rx: 1.5 });
           gn.appendChild(bar);
         }
-        var t = s("text");
-        t.setAttribute("x", 11); t.setAttribute("y", NH / 2);
-        t.textContent = (GLYPH[d.change] || "·") + " " + p.label;
-        gn.appendChild(t);
-        var title = s("title");
-        title.textContent = d.id + "  —  " + (d.head || "");
+        var gl = s("text", "glyph");
+        attr(gl, { x: 12, y: NH / 2 + 4, fill: COLOUR[d.change] || "var(--ghost)" });
+        gl.textContent = GLYPH[d.change] || "·";
+        gn.appendChild(gl);
+        var t3 = s("text", "label"); attr(t3, { x: 26, y: NH / 2 + 4 });
+        t3.textContent = p.label;
+        gn.appendChild(t3);
+        var n2 = s("text", "lines"); attr(n2, { x: p.w - 10, y: NH / 2 + 4, "text-anchor": "end" });
+        n2.textContent = (d.added ? "+" + d.added : "") + (d.removed ? " −" + d.removed : "");
+        gn.appendChild(n2);
+        if (carries > 1 && (d.change === "signature" || d.change === "removed")) {
+          var cg = s("g", "carries");
+          attr(cg, { transform: "translate(" + (p.w - 8) + ",-10)" });
+          var cr = s("rect"); attr(cr, { x: -58, y: 0, width: 58, height: 17 });
+          cg.appendChild(cr);
+          var ct = s("text"); attr(ct, { x: -29, y: 12, "text-anchor": "middle" });
+          ct.textContent = "carries " + carries;
+          cg.appendChild(ct);
+          gn.appendChild(cg);
+        }
+        var title = s("title"); title.textContent = d.id + "\n" + (d.head || "");
         gn.appendChild(title);
         gn.addEventListener("click", function (ev) { ev.stopPropagation(); state.sel = d.id; draw(); });
+        gn.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter") { ev.preventDefault(); state.sel = d.id; draw(); }
+        });
         gNodes.appendChild(gn);
       });
 
-      map.appendChild(svg);
+      stage.appendChild(svg);
 
-      var box = { x1: 0, y1: 0, x2: 0, y2: 0 };
-      L.nodes.forEach(function (p) {
-        box.x2 = Math.max(box.x2, p.x + p.w); box.y2 = Math.max(box.y2, p.y + NH);
+      var lg = h("div", "overlay legend");
+      lg.appendChild(key("var(--iface)", "solid", "named in a signature"));
+      lg.appendChild(key("var(--ghost)", "dashed", "named in a body"));
+      if (Object.keys(L.back).length) lg.appendChild(key("var(--removed)", "dashed", "cycle, cut here"));
+      lg.appendChild(h("span", null, L.nodes.length + " of " + tops.length + " definitions"));
+      stage.appendChild(lg);
+      function key(color, style, text) {
+        var sp = h("span"), i2 = h("i");
+        i2.style.borderTopColor = color; i2.style.borderTopStyle = style;
+        sp.appendChild(i2); sp.appendChild(document.createTextNode(text));
+        return sp;
+      }
+
+      var z = h("div", "overlay zoom");
+      [["−", "Zoom out", function () { zoomTo(view.k / 1.25); }],
+       ["+", "Zoom in", function () { zoomTo(view.k * 1.25); }],
+       ["fit", "Fit the graph", function () { fit = true; drawGraph(); }]].forEach(function (b) {
+        var btn = h("button", b[0] === "fit" ? "wide" : null, b[0]);
+        btn.type = "button";
+        btn.setAttribute("aria-label", b[1]);
+        btn.addEventListener("click", function (e) { e.stopPropagation(); b[2](); });
+        z.appendChild(btn);
       });
+      stage.appendChild(z);
+
+      var mini = h("div", "overlay"); mini.id = "mini";
+      var ms = s("svg");
+      attr(ms, { viewBox: "0 0 " + L.box.w + " " + L.box.h, preserveAspectRatio: "xMidYMid meet" });
+      L.nodes.forEach(function (p) {
+        var hot = (p.def.change === "signature" || p.def.change === "removed") && ifaceIn(p.def.id).length > 1;
+        var dot = s("rect", "mini-dot" + (hot ? " hot" : ""));
+        attr(dot, { x: p.x, y: p.y, width: p.w, height: NH, rx: 6 });
+        ms.appendChild(dot);
+      });
+      var mv = s("rect", "mini-view"); mv.setAttribute("id", "mini-view");
+      ms.appendChild(mv);
+      mini.appendChild(ms);
+      stage.appendChild(mini);
+
       if (fit) {
-        var w = map.clientWidth || 800, hh = map.clientHeight || 600;
-        var k = Math.min(1, Math.min((w - 40) / (box.x2 || 1), (hh - 40) / (box.y2 || 1)));
-        view = { k: Math.max(0.08, k), x: 20, y: 20 };
+        var w = stage.clientWidth || 900, hh = (stage.clientHeight || 600) - 32;
+        var k = Math.min(1.1, Math.min((w - 48) / L.box.w, (hh - 48) / L.box.h));
+        view = { k: Math.max(0.06, k), x: 24, y: 18 };
         fit = false;
       }
       apply();
@@ -530,10 +736,9 @@
         view.y = my - (my - view.y) * (k2 / view.k);
         view.k = k2; apply();
       }, { passive: false });
-      // Pan only once the pointer has actually moved, and capture it only then:
-      // capturing on the press retargets the click to the svg, and every box
-      // under it stops answering.
-      var down = null, dragged = false;
+      // Pan once the pointer has moved, and capture only then: capturing on the
+      // press hands the click to the canvas and every box stops answering.
+      var down = null;
       svg.addEventListener("pointerdown", function (e) {
         down = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, id: e.pointerId, held: false };
         dragged = false;
@@ -551,187 +756,392 @@
       });
       svg.addEventListener("pointerup", function () { down = null; svg.classList.remove("dragging"); });
       svg.addEventListener("pointercancel", function () { down = null; svg.classList.remove("dragging"); });
+    }
 
-      var z = h("div", "zoomers");
-      [["−", function () { view.k = Math.max(0.05, view.k / 1.25); apply(); }],
-       ["+", function () { view.k = Math.min(3, view.k * 1.25); apply(); }],
-       ["fit", function () { fit = true; drawGraph(); }]].forEach(function (b) {
-        var btn = h("button", b[0] === "fit" ? "wide" : null, b[0]);
-        btn.type = "button";
-        btn.addEventListener("click", function (e) { e.stopPropagation(); b[1](); });
-        z.appendChild(btn);
-      });
-      map.appendChild(z);
-
-      var lg = h("div", "legend");
-      lg.appendChild(key("var(--iface)", "solid", "named in a signature"));
-      lg.appendChild(key("var(--body)", "dashed", "named in a body"));
-      lg.appendChild(key("var(--removed)", "dashed", "cycle, cut here"));
-      var n = h("span", null, L.nodes.length + " of " + defs.length + " definitions");
-      lg.appendChild(n);
-      map.appendChild(lg);
-      function key(color, style, text) {
-        var sp = h("span"), i = h("i");
-        i.style.borderTopColor = color; i.style.borderTopStyle = style;
-        sp.appendChild(i); sp.appendChild(document.createTextNode(text));
-        return sp;
-      }
+    function zoomTo(k) {
+      var w = stage.clientWidth / 2, hh = stage.clientHeight / 2;
+      var k2 = Math.min(3, Math.max(0.05, k));
+      view.x = w - (w - view.x) * (k2 / view.k);
+      view.y = hh - (hh - view.y) * (k2 / view.k);
+      view.k = k2; apply();
     }
     function apply() {
-      if (world) world.setAttribute("transform", "translate(" + view.x + "," + view.y + ") scale(" + view.k + ")");
+      if (!world) return;
+      world.setAttribute("transform", "translate(" + view.x + "," + view.y + ") scale(" + view.k + ")");
+      var mv = document.getElementById("mini-view");
+      if (mv && lastLayout) {
+        attr(mv, { x: -view.x / view.k, y: -view.y / view.k,
+                   width: stage.clientWidth / view.k, height: (stage.clientHeight - 32) / view.k, rx: 10 });
+      }
+      var lanes = stage.querySelector(".lanes");
+      if (lanes && lastLayout) {
+        Array.prototype.forEach.call(lanes.children, function (t) {
+          var i = +t.getAttribute("data-lane");
+          t.style.left = (lastLayout.colx[i] * view.k + view.x) + "px";
+          t.style.opacity = view.k < 0.34 ? "0" : "1";
+        });
+      }
     }
 
-    // ---- the tree
-    function kidsOf(d) {
-      var ks = [];
-      (members[d.id] || []).forEach(function (m) { ks.push({ def: m }); });
-      (out[d.id] || []).forEach(function (e) { ks.push({ def: byId[e.to], edge: e }); });
-      return ks;
+    // ---------- reading order ----------
+    function threadOf(root) {
+      var rows = [], seen = {};
+      (function walk(d, depth, edge) {
+        if (seen[d.id]) return;
+        seen[d.id] = 1;
+        rows.push({ def: d, depth: depth, edge: edge });
+        (members[d.id] || []).forEach(function (m) {
+          if (shown(m)) rows.push({ def: m, depth: depth + 1, edge: null });
+        });
+        (out[d.id] || []).forEach(function (e) {
+          var t = byId[e.to];
+          if (t && shown(t)) walk(t, depth + 1, e);
+        });
+      })(root, 0, null);
+      return rows;
     }
-    function drawTree() {
-      tree.textContent = "";
-      var listed = {};
-      defs.filter(function (d) { return d.root && !d.class; }).forEach(function (d) { row(tree, d, 0, null, {}, listed); });
-      defs.forEach(function (d) { if (!listed[d.id] && !d.class) row(tree, d, 0, null, {}, listed); });
-      if (!tree.children.length) tree.appendChild(pad(h("p", "empty", "Nothing matches that filter.")));
+    function threadRoots() {
+      return tops.filter(function (d) { return d.root && shown(d) && (out[d.id] || []).length; })
+        .sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : (a.start || 0) - (b.start || 0); });
+    }
+
+    function drawReading() {
+      stage.textContent = "";
+      var wrap = h("div"); wrap.id = "reading";
+      var threads = threadRoots().map(threadOf);
+      var placed = {};
+      threads.forEach(function (t) { t.forEach(function (r) { placed[r.def.id] = 1; }); });
+      var loose = tops.filter(function (d) { return shown(d) && !placed[d.id]; });
+
+      var line = h("div", "head-line");
+      line.appendChild(h("h2", null, threads.length === 1 ? "One thread" : count(threads.length) + " threads"));
+      line.appendChild(h("p", null, threads.length > 1
+        ? "nothing makes you read them together, so they are numbered and kept apart"
+        : "read it top to bottom: each row is what the one above it uses"));
+      wrap.appendChild(line);
+
+      threads.forEach(function (rows, n) {
+        var root = rows[0].def, id = "t" + n;
+        var open = state.open[id] == null ? n === 0 : state.open[id];
+        var box = h("div", "thread" + (open ? " open" : ""));
+        var top = h("div", "top");
+        top.appendChild(h("span", "num", String(n + 1)));
+        top.appendChild(h("span", "name", label(root)));
+        var ifaces = rows.filter(function (r) { return r.def.change === "signature"; }).length;
+        top.appendChild(h("span", "about", rows.length + " definitions · " + areasOf(rows) + " · " +
+          (ifaces ? ifaces + " interface" + (ifaces === 1 ? "" : "s") + " changed" : "nothing outside them can break")));
+        top.appendChild(progressFor(rows.filter(function (r) { return read[r.def.id]; }).length, rows.length));
+        top.addEventListener("click", function () { state.open[id] = !open; draw(); });
+        box.appendChild(top);
+        if (open) {
+          var list = h("div", "rows");
+          rows.forEach(function (r, k) { list.appendChild(readingRow(r, k === 0)); });
+          box.appendChild(list);
+        }
+        wrap.appendChild(box);
+      });
+
+      if (loose.length) {
+        wrap.appendChild(rule(loose.length + " on their own — nothing else changed touches them"));
+        var lb = h("div", "thread open");
+        var ll = h("div", "rows");
+        loose.forEach(function (d) { ll.appendChild(readingRow({ def: d, depth: 0, edge: null }, true)); });
+        lb.appendChild(ll);
+        wrap.appendChild(lb);
+      }
       if (files.length) {
-        tree.appendChild(pad(h("div", "sec", "files with no definitions read")));
+        wrap.appendChild(rule(files.length + " files seam read no definitions from"));
         var ul = h("ul", "files");
         files.forEach(function (f) {
           var li = h("li");
-          li.appendChild(h("span", "n", "+" + (f.added || 0) + " −" + (f.removed || 0)));
-          li.appendChild(h("span", null, f.path));
+          li.appendChild(h("b", null, "+" + (f.added || 0) + " −" + (f.removed || 0) + "  "));
+          li.appendChild(document.createTextNode(f.path));
           ul.appendChild(li);
         });
-        tree.appendChild(pad(ul));
+        wrap.appendChild(ul);
       }
+      stage.appendChild(wrap);
     }
-    function pad(node) { node.style.padding = "0 14px"; return node; }
-    function row(parent, d, depth, edge, seen, listed) {
-      if (!d || seen[d.id] || !shown(d)) return;
-      listed[d.id] = true;
-      var kids = kidsOf(d).filter(function (k) { return k.def && shown(k.def) && !seen[k.def.id]; });
-      var open = !!state.open[d.id + "@" + depth];
-      var b = h("button", "row " + d.change);
-      b.type = "button";
-      b.setAttribute("aria-selected", state.sel === d.id ? "true" : "false");
-      b.style.paddingLeft = (10 + depth * 16) + "px";
-      b.appendChild(h("span", "fold", kids.length ? (open ? "▾" : "▸") : ""));
-      b.appendChild(h("span", "glyph", GLYPH[d.change] || "·"));
-      b.appendChild(h("span", "name", label(d)));
-      if (edge && edge.new) b.appendChild(h("span", "new", "⇢"));
-      b.appendChild(h("span", "where", baseName(d.path)));
-      b.addEventListener("click", function (ev) {
-        state.sel = d.id;
-        if (kids.length && (ev.offsetX < 22 || ev.detail === 2)) {
-          var k = d.id + "@" + depth;
-          state.open[k] = !state.open[k];
-        }
-        draw();
+    function rule(text) {
+      var a = h("div", "aside");
+      a.appendChild(h("i")); a.appendChild(h("span", null, text)); a.appendChild(h("i"));
+      return a;
+    }
+    function count(n) {
+      return ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"][n] || String(n);
+    }
+    // Where a thread sits, said as shortly as it can be: the first two segments
+    // of a path, which in a monorepo is the part that differs.
+    function areasOf(rows) {
+      var d = {};
+      rows.forEach(function (r) {
+        var parts = r.def.path.split("/");
+        d[parts.length > 2 ? parts.slice(0, 2).join("/") : parts[0]] = 1;
       });
-      parent.appendChild(b);
-      if (open && kids.length) {
-        var seen2 = Object.assign({}, seen); seen2[d.id] = true;
-        var box = h("div");
-        kids.forEach(function (k) { row(box, k.def, depth + 1, k.edge, seen2, listed); });
-        parent.appendChild(box);
+      var ks = Object.keys(d);
+      return ks.length > 3 ? ks.length + " areas" : ks.join(", ");
+    }
+    function progressFor(done, total) {
+      var p = h("span", "prog");
+      var bar = h("span", "bar"), fill = h("i");
+      fill.style.width = Math.round((done / Math.max(1, total)) * 74) + "px";
+      bar.appendChild(fill);
+      p.appendChild(bar);
+      p.appendChild(h("span", null, done + " of " + total));
+      return p;
+    }
+    function readingRow(r, first) {
+      var d = r.def;
+      var row = h("div", "r " + d.change + (read[d.id] ? " read" : "") + (state.sel === d.id ? " sel" : ""));
+      row.style.paddingLeft = (14 + r.depth * 24) + "px";
+      if (r.depth > 0) {
+        var el2 = h("span", "elbow");
+        el2.style.left = (14 + (r.depth - 1) * 24 + 7) + "px";
+        el2.style.top = "-8px";
+        el2.style.height = "22px";
+        row.appendChild(el2);
       }
+      var t = h("button", "tick");
+      t.type = "button";
+      t.setAttribute("aria-label", (read[d.id] ? "Mark unread: " : "Mark read: ") + label(d));
+      if (read[d.id]) t.appendChild(tickMark());
+      t.addEventListener("click", function (e) { e.stopPropagation(); toggleRead(d.id); });
+      row.appendChild(t);
+      row.appendChild(h("span", "g", GLYPH[d.change] || "·"));
+      row.appendChild(h("span", "nm", label(d)));
+      if (first) row.appendChild(h("span", "where", d.path));
+      if (r.edge) row.appendChild(h("span", "pill " + (r.edge.facet === "iface" ? "iface" : "bodyf"),
+        r.edge.facet === "iface" ? "in the signature" : "in the body"));
+      if (r.edge && r.edge.new) row.appendChild(h("span", "pill new", "new call"));
+      var carries = ifaceIn(d.id).length;
+      if (carries > 1 && (d.change === "signature" || d.change === "removed")) {
+        row.appendChild(h("span", "pill carries", "carries to " + carries));
+      }
+      row.appendChild(h("span", "lines", (d.added ? "+" + d.added : "") + (d.removed ? " −" + d.removed : "")));
+      row.addEventListener("click", function () { state.sel = d.id; draw(); });
+      return row;
+    }
+    function toggleRead(id) {
+      if (read[id]) delete read[id]; else read[id] = 1;
+      save(); draw();
     }
 
-    // ---- the detail
-    function drawDetail() {
-      detail.textContent = "";
+    // ---------- the panel ----------
+    function drawPanel() {
+      panel.textContent = "";
       var d = byId[state.sel];
       if (!d) {
-        var p = h("p", "hint");
-        p.innerHTML = "Click a definition. Arrows run from a definition to what it uses; a <b>solid</b> arrow means the name is in the user's own signature, so a change to it carries on outward, and a <b>dashed</b> one means it is in the body, where it stops.";
-        detail.appendChild(p);
+        var p = h("div", "hint");
+        p.innerHTML = "Click a definition.<br><br>An arrow runs from a definition to what it uses. A <b>solid</b> one means the name sits in the user's own signature, so a change to it carries on outward; a <b>dashed</b> one means it sits in the body, where it stops.";
+        panel.appendChild(p);
         return;
       }
-      detail.appendChild(h("h2", null, label(d)));
-      detail.appendChild(h("div", "path", d.path + (d.start ? ":" + d.start + (d.end !== d.start ? "-" + d.end : "") : "")));
-      var meta = h("div", "meta");
-      meta.appendChild(h("span", "chip on " + d.change, WORD[d.change] || d.change));
-      if (d.root) meta.appendChild(h("span", "chip on root", "entry point"));
-      if (d.exported) meta.appendChild(h("span", "chip", "exported"));
-      meta.appendChild(h("span", "chip", d.kind));
-      if (d.box && d.box.kind !== "source") meta.appendChild(h("span", "chip", d.box.kind));
-      if (d.added || d.removed) meta.appendChild(h("span", "chip", "+" + (d.added || 0) + " −" + (d.removed || 0)));
-      if (d.staged != null) meta.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
-      detail.appendChild(meta);
-      if (d.head) detail.appendChild(h("pre", "head", d.head));
+      var scroll = h("div", "scroll");
+
+      var top = h("div", "ptop");
+      top.appendChild(h("h2", null, label(d)));
+      top.appendChild(h("div", "path", d.path + (d.start ? ":" + d.start + (d.end !== d.start ? "-" + d.end : "") : "")));
+      var chips = h("div", "chips");
+      chips.appendChild(h("span", "chip " + d.change, WORD[d.change] || d.change));
+      if (d.root) chips.appendChild(h("span", "chip", "entry point"));
+      if (d.exported) chips.appendChild(h("span", "chip", "exported"));
+      chips.appendChild(h("span", "chip", d.kind));
+      if (d.box && d.box.kind !== "source") chips.appendChild(h("span", "chip", d.box.kind));
+      if (d.staged != null) chips.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
+      top.appendChild(chips);
+      scroll.appendChild(top);
+
+      var carries = ifaceIn(d.id);
+      var says = h("div", "says" + (carries.length && (d.change === "signature" || d.change === "removed") ? "" : " calm"));
+      if (carries.length && (d.change === "signature" || d.change === "removed")) {
+        says.innerHTML = carries.length + (carries.length === 1 ? " definition names " : " definitions name ") +
+          "<code>" + label(d) + "</code> in " + (carries.length === 1 ? "its" : "their") +
+          " own signature, so the change does not stop here. Read those next.";
+      } else if (d.change === "body" && !(into[d.id] || []).length) {
+        says.textContent = "Its body changed and nothing in this change mentions it, so nothing outside it can break because of it. Safe to read last.";
+      } else if (d.change === "added") {
+        says.textContent = "New here, with nothing on the base side to compare it against: read it for what it does rather than for what it did.";
+      } else if (d.change === "removed") {
+        says.textContent = "Gone. What named it had to change with it, or it was not named here at all.";
+      } else {
+        says.textContent = "Its body changed, and nothing else. Nothing outside it can break because of it.";
+      }
+      scroll.appendChild(says);
+
       if (d.diff && d.diff.length) {
         var plus = d.diff.filter(function (l) { return l.mark === "+"; }).length;
         var minus = d.diff.filter(function (l) { return l.mark === "-"; }).length;
-        detail.appendChild(h("div", "sec", "diff \u00b7 +" + plus + " \u2212" + minus));
-        var pre = h("div", "diff");
+        scroll.appendChild(h("div", "sec", "Diff · +" + plus + " −" + minus));
+        var box = h("div", "diff");
         d.diff.forEach(function (l) {
           var line = h("div", "dl " + (l.mark === "+" ? "add" : l.mark === "-" ? "del" : "ctx"));
           line.appendChild(h("span", "ln", l.new || l.old || ""));
           line.appendChild(h("span", "tx", (l.mark === " " ? " " : l.mark) + " " + l.text));
-          pre.appendChild(line);
+          box.appendChild(line);
         });
-        detail.appendChild(pre);
+        scroll.appendChild(box);
+      } else if (d.head) {
+        scroll.appendChild(h("div", "sec", "Signature"));
+        var pre = h("div", "diff");
+        var one = h("div", "dl");
+        one.appendChild(h("span", "ln", String(d.start || "")));
+        one.appendChild(h("span", "tx", d.head));
+        pre.appendChild(one);
+        scroll.appendChild(pre);
       }
-      section("uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }),
-        "Nothing else in this change.");
-      section("used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }),
-        d.change === "body" ? "Nothing here. A body-only change with nothing above it is safe to read last."
-                            : "Nothing in this change mentions it.");
-      if (d.change === "signature" || d.change === "removed") {
-        var carries = (into[d.id] || []).filter(function (e) { return e.facet === "iface"; });
-        if (carries.length) {
-          var n = h("p", "hint");
-          n.style.marginTop = "18px";
-          n.textContent = "Its interface changed and " + carries.length + " " +
-            (carries.length === 1 ? "definition names" : "definitions name") +
-            " it in their own signature, so the change carries on past them.";
-          detail.appendChild(n);
-        }
-      }
+
+      uses(scroll, "Uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }), "Nothing else in this change.");
+      uses(scroll, "Used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }), "Nothing in this change mentions it.");
+      panel.appendChild(scroll);
+
+      var foot = h("div", "pfoot");
+      var mr = h("button", "mark-read" + (read[d.id] ? " done" : ""));
+      mr.type = "button";
+      if (!read[d.id]) mr.appendChild(tickMark());
+      mr.appendChild(document.createTextNode(read[d.id] ? "Read — mark it back" : "Read, and on to the next"));
+      mr.addEventListener("click", function () { markAndAdvance(); });
+      foot.appendChild(mr);
+      foot.appendChild(h("span", "kbd", "space"));
+      panel.appendChild(foot);
     }
-    function section(title, items, emptyText) {
-      detail.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
-      if (!items.length) { detail.appendChild(h("p", "empty", emptyText)); return; }
-      var ul = h("ul", "edges");
+    function uses(where, title, items, emptyText) {
+      where.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
+      if (!items.length) { where.appendChild(h("p", "empty", emptyText)); return; }
+      var box = h("div", "uses");
       items.forEach(function (it) {
         if (!it.other) return;
-        var li = h("li"), b = h("button");
+        var b = h("button");
         b.type = "button";
-        b.appendChild(h("span", "glyph " + it.other.change, GLYPH[it.other.change] || "·"));
-        b.appendChild(h("span", null, label(it.other)));
-        b.appendChild(h("span", "facet " + it.e.facet, it.e.facet === "iface" ? "in the signature" : "in the body"));
-        if (it.e.new) b.appendChild(h("span", "new", "new"));
+        var gl = h("span", "g", GLYPH[it.other.change] || "·");
+        gl.style.color = COLOUR[it.other.change] || "var(--ghost)";
+        b.appendChild(gl);
+        b.appendChild(h("span", "nm", label(it.other)));
+        b.appendChild(h("span", "far " + it.e.facet, it.e.facet === "iface" ? "in the signature" : "in the body"));
         b.addEventListener("click", function () { state.sel = it.other.id; draw(); });
-        li.appendChild(b); ul.appendChild(li);
+        box.appendChild(b);
       });
-      detail.appendChild(ul);
+      where.appendChild(box);
+    }
+    function readingOrder() {
+      var ids = [];
+      threadRoots().forEach(function (r) {
+        threadOf(r).forEach(function (x) { if (ids.indexOf(x.def.id) < 0) ids.push(x.def.id); });
+      });
+      tops.forEach(function (d) { if (shown(d) && ids.indexOf(d.id) < 0) ids.push(d.id); });
+      return ids;
+    }
+    function markAndAdvance() {
+      if (!state.sel) return;
+      var order = readingOrder(), at = order.indexOf(state.sel);
+      if (read[state.sel]) delete read[state.sel]; else read[state.sel] = 1;
+      save();
+      if (read[state.sel] && at >= 0 && at + 1 < order.length) state.sel = order[at + 1];
+      draw();
     }
 
+    // ---------- the score ----------
+    function drawScore() {
+      var veil = h("div", "veil");
+      veil.addEventListener("click", function (e) { if (e.target === veil) { state.score = false; draw(); } });
+      var sheet = h("div", "sheet");
+
+      var top = h("div", "top");
+      var left = h("div");
+      left.appendChild(h("h2", null, capital(score.verdict)));
+      left.appendChild(h("p", "why", "The verdict is the worst line, not an average: one bad dimension makes a change hard to review however tidy the rest is. Nothing here is a grade, and no number is added to another."));
+      top.appendChild(left);
+      var tot = h("div", "totals");
+      tot.appendChild(h("div", null, g.rev || ""));
+      tot.appendChild(h("div", null, score.totals.definitions + " definitions · " + score.totals.edges + " edges · " + score.totals.files + " files"));
+      top.appendChild(tot);
+      sheet.appendChild(top);
+
+      var body = h("div", "body");
+      var rows = score.rows.slice().sort(function (a, b) { return b.rating - a.rating; });
+      rows.forEach(function (r, n) {
+        var m = h("div", "m " + (r.rating === 2 ? "bad" : r.rating === 1 ? "look" : "") + (n === 0 ? " first" : ""));
+        m.appendChild(h("span", "flag"));
+        m.appendChild(h("div", "mname", r.name));
+        m.appendChild(h("div", "mval", r.value));
+        m.appendChild(scaleFor(r));
+        m.appendChild(h("div", "mnote", r.note));
+        body.appendChild(m);
+        if (r.rating > 0 && r.advice) body.appendChild(h("div", "advice", r.advice));
+      });
+      sheet.appendChild(body);
+
+      var foot = h("div", "foot");
+      var keys = h("div", "keys");
+      [["ok", "var(--added)"], ["look", "var(--iface)"], ["bad", "var(--removed)"]].forEach(function (k) {
+        var sp = h("span"), i2 = h("i");
+        i2.style.background = k[1];
+        sp.appendChild(i2); sp.appendChild(document.createTextNode(k[0]));
+        keys.appendChild(sp);
+      });
+      foot.appendChild(keys);
+      foot.appendChild(h("span", null, "thresholds are what a reviewer can carry, not measurements of anything"));
+      var close = h("button", "ghostbtn close", "Close");
+      close.type = "button";
+      close.addEventListener("click", function () { state.score = false; draw(); });
+      foot.appendChild(close);
+      sheet.appendChild(foot);
+
+      veil.appendChild(sheet);
+      stage.appendChild(veil);
+    }
+    function capital(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+    function scaleFor(r) {
+      var box = h("div", "scale");
+      if (r.bad > 100000) { box.style.background = "none"; return box; }
+      var span = (r.bad * 1.3) || 1;
+      var okEnd = Math.min(100, (r.look / span) * 100);
+      var lookEnd = Math.min(100, (r.bad / span) * 100);
+      box.style.background = "linear-gradient(to right, var(--added-soft) 0 " + okEnd + "%, var(--iface-soft) " +
+        okEnd + "% " + lookEnd + "%, var(--removed-soft) " + lookEnd + "% 100%)";
+      var mark = h("i");
+      mark.style.left = Math.min(98, Math.max(0, (r.n / span) * 100)) + "%";
+      mark.style.background = r.rating === 2 ? "var(--removed)" : r.rating === 1 ? "var(--iface)" : "var(--added)";
+      box.appendChild(mark);
+      return box;
+    }
+
+    // ---------- draw ----------
     function draw() {
       var graphing = state.view === "graph";
-      main.className = graphing ? "graph" : "";
-      map.hidden = !graphing;
-      tree.hidden = graphing;
       bGraph.setAttribute("aria-pressed", graphing ? "true" : "false");
-      bTree.setAttribute("aria-pressed", graphing ? "false" : "true");
-      if (graphing) drawGraph(); else drawTree();
-      drawDetail();
+      bRead.setAttribute("aria-pressed", graphing ? "false" : "true");
+      var doneN = tops.filter(function (d) { return read[d.id]; }).length;
+      progress.textContent = "";
+      if (doneN) {
+        progress.appendChild(document.createTextNode(doneN + " of " + tops.length + " read"));
+        var bar = h("span", "bar"), fill = h("i");
+        fill.style.width = Math.round((doneN / Math.max(1, tops.length)) * 74) + "px";
+        bar.appendChild(fill); progress.appendChild(bar);
+      }
+      if (graphing) drawGraph(); else drawReading();
+      if (state.score && score) drawScore();
+      drawPanel();
     }
 
     document.addEventListener("keydown", function (e) {
-      if (e.target.tagName === "INPUT") return;
+      if (e.target.tagName === "INPUT") { if (e.key === "Escape") e.target.blur(); return; }
       if (e.key === "/") { e.preventDefault(); search.focus(); return; }
-      if (e.key === "g") { state.view = state.view === "graph" ? "tree" : "graph"; fit = true; draw(); return; }
-      if (state.view !== "tree") return;
-      var rows = Array.prototype.slice.call(tree.querySelectorAll(".row"));
-      var at = rows.findIndex(function (r) { return r.getAttribute("aria-selected") === "true"; });
-      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); if (rows.length) rows[Math.min(rows.length - 1, at + 1)].click(); }
-      else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); if (rows.length) rows[Math.max(0, at - 1)].click(); }
-      else if (e.key === "l" || e.key === "h") { if (rows[at]) rows[at].dispatchEvent(new MouseEvent("click", { detail: 2, bubbles: true })); }
+      if (e.key === "Escape") { if (state.score) { state.score = false; draw(); } return; }
+      if (e.key === "s" || e.key === "S") { if (score) { state.score = !state.score; draw(); } return; }
+      if (e.key === "g") { state.view = state.view === "graph" ? "reading" : "graph"; fit = true; draw(); return; }
+      if (e.key === " ") { e.preventDefault(); markAndAdvance(); return; }
+      if (e.key === "j" || e.key === "k" || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        var order = readingOrder(), at = order.indexOf(state.sel);
+        var next = (e.key === "j" || e.key === "ArrowDown")
+          ? order[Math.min(order.length - 1, at + 1)]
+          : order[Math.max(0, at - 1)];
+        state.sel = next || order[0] || null;
+        draw();
+      }
     });
-
     window.addEventListener("resize", function () { if (state.view === "graph") { fit = true; drawGraph(); } });
+
     draw();
   }
 })();

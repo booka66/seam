@@ -251,10 +251,15 @@ draw_score() {
 # being read can close the script tag early.
 page() {
   diffs "$1" > "$tmp/diffs.json"
+  graph "$1" > "$tmp/graph.json"
+  # The page shows the same score S does, so it comes from the same jq rather
+  # than from a second reading of the rules in JavaScript.
+  jq -c --arg brief "" --arg fmt json -f "$share/score.jq" < "$tmp/graph.json" > "$tmp/score.json"
   awk '/<!--SEAM DATA-->/ { exit } { print }' "$share/view.html"
   printf '<script id="seam-data" type="application/json">'
-  graph "$1" | jq -c --slurpfile d "$tmp/diffs.json" \
-    '.definitions |= map(. + {diff: ($d[0][.id] // null)})' | sed 's|</|<\\/|g'
+  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" \
+    '.definitions |= map(. + {diff: ($d[0][.id] // null)}) | .score = $s[0]' < "$tmp/graph.json" |
+    sed 's|</|<\\/|g'
   printf '</script>\n'
   awk 'f { print } /<!--SEAM DATA-->/ { f = 1 }' "$share/view.html"
 }
@@ -637,6 +642,6 @@ if [ -n "$html" ]; then
     page "$out"
   fi
 elif [ -n "$score" ]; then
-  if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 -f "$share/score.jq"
-  else graph "$out" | jq -r --arg brief "" -f "$share/score.jq" | draw_score; fi
+  if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 --arg fmt "" -f "$share/score.jq"
+  else graph "$out" | jq -r --arg brief "" --arg fmt "" -f "$share/score.jq" | draw_score; fi
 elif [ -n "$json" ]; then graph "$out"; else cat "$out"; fi

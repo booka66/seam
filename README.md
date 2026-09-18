@@ -64,22 +64,35 @@ and that is what "the interface changed" means. Same answer every time.
 
 `--score` is not a quality grade, and there is no single number: one number hides
 which of eight different problems you have, and rewards gaming whichever one is
-cheapest to move. Each line is a count, with the definition to blame:
+cheapest to move. Each line is a count, with a coloured bar for its rating and,
+under anything that is not ok, what to do about it:
 
 ```
-seam  main..  ·  195 definitions, 171 edges
+  seam  main...
+  26 definitions · 36 edges · 21 files
 
-  stories   46 to follow                  bad   entry points with something under them
-  loose     55 of 194 on their own        ok    changed definitions nothing else changed touches
-  knots     none                          ok    nothing in the change depends on itself
-  chain     7 deep                        look  definitions followed from one entry point
-  carry     17 of 98 changed or gone      bad   ReturnCarrierOption is named in 7 other signatures
-  heaviest  90 lines in one               ok    reviewsRoutes, on its own
-  spread    139 files, 79 directories     bad   files the change touches at all
-  safe      86 of 194 body only           ok    nothing outside them can break because of them
+  ▌ stories   7 to follow              entry points with something under them
+      7 threads that nothing makes you read together. Split the branch at them
+      and each half reads on its own.
 
-  hard to review as one change
+  ▌ loose     1 of 26 on their own     changed definitions nothing else changed touches
+  ▌ knots     none                     definitions that depend on themselves, in a circle
+  ▌ chain     7 deep                   definitions followed from one entry point
+      The change threads through 7 layers. Expect a reviewer to lose the thread
+      before the end.
+
+  ▌ carry     2 of 7 changed or gone   interfaces something else names in its own signature
+  ▌ heaviest  64 lines in one          the most changed lines in a single definition
+  ▌ spread    21 files, 13 directories files the change touches at all
+
+  ▌ worth reading in an order
 ```
+
+The bar is green, amber or red. Colour comes on for a terminal, and `SEAM_COLOR=1`
+turns it on for a pager. `--brief` says the same in one line, for a footer or a
+CI comment, and `--table <file>` scores a table already built instead of reading
+the trees again — which is how otis's picker shows this under `S` without paying
+for it twice.
 
 The verdict is the worst line, not an average, because a change with one terrible
 dimension is hard to review however tidy the rest is. What each line means, and

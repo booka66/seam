@@ -204,6 +204,46 @@ diffs() {
     | from_entries'
 }
 
+# The score, drawn: a bar in the colour of the rating, the count, what it
+# counts, and under any line that is not ok, what to do about it, wrapped to the
+# terminal. Colour when a terminal is reading it, or when SEAM_COLOR says so,
+# since a picker pipes this into a pager.
+draw_score() {
+  colour=0
+  [ -t 1 ] && colour=1
+  case ${SEAM_COLOR:-} in 1|yes|always) colour=1 ;; 0|no|never) colour=0 ;; esac
+  width=$(tput cols 2>/dev/null || echo 0)
+  [ "${width:-0}" -ge 60 ] 2>/dev/null || width=${COLUMNS:-92}
+  [ "${width:-0}" -ge 60 ] 2>/dev/null || width=92
+  [ "$width" -le 110 ] || width=110
+  awk -F'\t' -v c="$colour" -v W="$width" '
+    function wrap(text, indent,   words, n, i, line) {
+      n = split(text, words, " ")
+      line = indent
+      for (i = 1; i <= n; i++) {
+        if (length(line) + length(words[i]) + 1 > W && line != indent) { print D line R; line = indent }
+        line = line (line == indent ? "" : " ") words[i]
+      }
+      if (line != indent) print D line R
+    }
+    function fit(t, room) { return (length(t) > room) ? substr(t, 1, room - 1) "\342\200\246" : t }
+    BEGIN {
+      if (c) { R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; COL[0] = "\033[32m"; COL[1] = "\033[33m"; COL[2] = "\033[31m" }
+      bar = "\342\226\214"
+      print ""
+    }
+    $1 == "rev" { printf "  %sseam%s  %s%s%s\n", B, R, D, $2, R; next }
+    $1 == "totals" { printf "  %s%s%s\n\n", D, $2, R; next }
+    $1 == "row" {
+      rate = $4 + 0
+      printf "  %s%s%s %s%-9s%s %-28s %s%s%s\n", COL[rate], bar, R, B, $2, R, $3, D, fit($5, W - 45), R
+      if (rate > 0 && $6 != "") { wrap($6, "      "); print "" }
+      next
+    }
+    $1 == "verdict" { printf "\n  %s%s %s%s\n\n", COL[$3 + 0], bar, $2, R; next }
+  '
+}
+
 # --html: the graph inside share/view.html, which is the one page seam ships:
 # the definitions in reading order, and clicking one shows what it uses and what
 # uses it, each edge saying whether the mention is in a signature or a body. The
@@ -596,5 +636,7 @@ if [ -n "$html" ]; then
   else
     page "$out"
   fi
-elif [ -n "$score" ]; then graph "$out" | jq -r --arg brief "${brief:-}" -f "$share/score.jq"
+elif [ -n "$score" ]; then
+  if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 -f "$share/score.jq"
+  else graph "$out" | jq -r --arg brief "" -f "$share/score.jq" | draw_score; fi
 elif [ -n "$json" ]; then graph "$out"; else cat "$out"; fi

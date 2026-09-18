@@ -213,17 +213,22 @@ draw_score() {
   [ -t 1 ] && colour=1
   case ${SEAM_COLOR:-} in 1|yes|always) colour=1 ;; 0|no|never) colour=0 ;; esac
   # COLUMNS first: a preview pane is narrower than the terminal it sits in, and
-  # it is the caller who knows that (fzf says so in FZF_PREVIEW_COLUMNS).
+  # it is the caller who knows that (fzf says so in FZF_PREVIEW_COLUMNS). Then
+  # the terminal itself, asked through /dev/tty rather than through stdout:
+  # stdout here is usually a pipe, and tput then answers with terminfo's 80
+  # whatever the window is, which cut every note short in a wide terminal.
   width=${COLUMNS:-0}
+  [ "${width:-0}" -ge 40 ] 2>/dev/null || width=$({ stty size < /dev/tty; } 2>/dev/null | cut -d' ' -f2)
   [ "${width:-0}" -ge 40 ] 2>/dev/null || width=$(tput cols 2>/dev/null || echo 0)
   [ "${width:-0}" -ge 40 ] 2>/dev/null || width=92
   [ "$width" -le 110 ] || width=110
   awk -F'\t' -v c="$colour" -v W="$width" '
-    function wrap(text, indent,   words, n, i, line) {
+    function wrap(text, indent,   words, n, i, line, room) {
+      room = (W > 104) ? 104 : W
       n = split(text, words, " ")
       line = indent
       for (i = 1; i <= n; i++) {
-        if (length(line) + length(words[i]) + 1 > W && line != indent) { print D line R; line = indent }
+        if (length(line) + length(words[i]) + 1 > room && line != indent) { print D line R; line = indent }
         line = line (line == indent ? "" : " ") words[i]
       }
       if (line != indent) print D line R

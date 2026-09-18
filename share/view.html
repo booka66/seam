@@ -29,6 +29,7 @@
     --iface-line: #e2cb9a;
     --body: #8a8c94;
     --mark: #eceae4;
+    --panel-w: 520px;
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     --ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
     --display: "Instrument Serif", Georgia, serif;
@@ -101,6 +102,8 @@
   .toggles { display: flex; gap: 12px; }
   .toggles label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap; }
 
+  @media (max-width: 1240px) { header .tally { display: none; } }
+  @media (max-width: 1060px) { header .toggles { display: none; } }
   main { flex-grow: 1; display: flex; min-height: 0; }
   #stage { position: relative; flex-grow: 1; min-width: 0; background: var(--ground); overflow: hidden; }
 
@@ -190,7 +193,12 @@
   .files b { font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
 
   /* ---------- panel ---------- */
-  #panel { width: 400px; flex: none; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+  #panel { width: var(--panel-w); flex: none; min-width: 0; background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+  /* The handle between the two: a hairline that thickens under the pointer. */
+  .grip { flex: none; width: 7px; cursor: col-resize; background: var(--line); position: relative; }
+  .grip::after { content: ""; position: absolute; inset: 0 3px; background: var(--line); }
+  .grip:hover::after, .grip.on::after { background: var(--accent); }
+  .grip:hover, .grip.on { background: var(--accent-soft); }
   #panel .scroll { overflow: auto; flex-grow: 1; }
   .ptop { padding: 20px 20px 16px; border-bottom: 1px solid var(--rule); }
   .ptop h2 { margin: 0; font-family: var(--mono); font-size: 17px; font-weight: 500; word-break: break-all; }
@@ -211,11 +219,11 @@
   .dl.add { background: var(--added-soft); } .dl.add .tx { color: var(--added); }
   .dl.del { background: var(--removed-soft); } .dl.del .tx { color: var(--removed); }
   .uses { padding: 0 12px; display: flex; flex-direction: column; gap: 1px; }
-  .uses button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
+  .uses button { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
   .uses button:hover { background: var(--mark); }
-  .uses .nm { font-family: var(--mono); font-size: 12.5px; }
-  .uses .g { font-family: var(--mono); font-size: 12px; width: 10px; text-align: center; }
-  .uses .far { margin-left: auto; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  .uses .nm { font-family: var(--mono); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uses .g { font-family: var(--mono); font-size: 12px; width: 10px; flex: none; text-align: center; }
+  .uses .far { margin-left: auto; flex: none; padding-left: 8px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
   .uses .far.iface { color: var(--iface); }
   .pfoot { padding: 14px 20px; border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
   .mark-read { flex-grow: 1; height: 38px; border: 0; border-radius: 8px; background: var(--added); color: var(--ground); font-size: 12.5px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
@@ -254,7 +262,8 @@
   #drop h2 { margin: 0 0 10px; font-family: var(--display); font-weight: 400; font-size: 24px; }
   @media (max-width: 900px) {
     main { flex-direction: column; }
-    #panel { width: auto; border-left: 0; border-top: 1px solid var(--line); max-height: 46%; }
+    #panel { width: auto; border-top: 1px solid var(--line); max-height: 46%; }
+    .grip { display: none; }
   }
 </style>
 </head>
@@ -423,9 +432,63 @@
 
     var main = h("main");
     var stage = h("div"); stage.id = "stage";
+    var grip = h("div", "grip");
+    grip.setAttribute("role", "separator");
+    grip.setAttribute("aria-orientation", "vertical");
+    grip.setAttribute("aria-label", "Drag to resize the panel");
+    grip.tabIndex = 0;
     var panel = h("div"); panel.id = "panel";
-    main.appendChild(stage); main.appendChild(panel);
+    main.appendChild(stage); main.appendChild(grip); main.appendChild(panel);
     document.body.appendChild(main);
+
+    // How wide the panel is, kept for this browser: a diff wants more room than
+    // a list of names does, and which of the two you are reading is yours.
+    var WKEY = "seam:panel";
+    function setWidth(px) {
+      var max = Math.max(360, window.innerWidth - 420);
+      var w = Math.min(max, Math.max(340, Math.round(px)));
+      document.documentElement.style.setProperty("--panel-w", w + "px");
+      return w;
+    }
+    try {
+      var kept = parseInt(localStorage.getItem(WKEY) || "", 10);
+      if (kept) setWidth(kept);
+    } catch (e) {}
+    (function () {
+      var from = null;
+      grip.addEventListener("pointerdown", function (e) {
+        from = { x: e.clientX, w: panel.getBoundingClientRect().width };
+        grip.classList.add("on");
+        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+        e.preventDefault();
+      });
+      grip.addEventListener("pointermove", function (e) {
+        if (!from) return;
+        setWidth(from.w - (e.clientX - from.x));
+        apply();
+      });
+      function done() {
+        if (!from) return;
+        from = null;
+        grip.classList.remove("on");
+        try { localStorage.setItem(WKEY, String(Math.round(panel.getBoundingClientRect().width))); } catch (e) {}
+        apply();
+      }
+      grip.addEventListener("pointerup", done);
+      grip.addEventListener("pointercancel", done);
+      grip.addEventListener("dblclick", function () {
+        document.documentElement.style.removeProperty("--panel-w");
+        try { localStorage.removeItem(WKEY); } catch (e) {}
+        apply();
+      });
+      grip.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var w = setWidth(panel.getBoundingClientRect().width + (e.key === "ArrowLeft" ? 24 : -24));
+        try { localStorage.setItem(WKEY, String(w)); } catch (err) {}
+        apply();
+      });
+    })();
 
     function shown(d) {
       if (state.hideBody && d.change === "body") return false;

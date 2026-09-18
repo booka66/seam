@@ -118,7 +118,7 @@ bin/seam-test
 
 ## Status
 
-Extracted from [otis](https://github.com/)'s symbol picker, which is the first
+Extracted from [otis](https://github.com/booka66/otis)'s symbol picker, which is the first
 thing to read a seam table and still the reason it exists. TypeScript and TSX
 today; the language contract has had one implementation, so expect the second one
 to find something wrong with it.

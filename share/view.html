@@ -16,41 +16,32 @@
     --added: #2f7d4f;
     --removed: #a8402f;
     --iface: #9a6410;
-    --body: #6b6d76;
+    --body: #8a8c94;
     --mark: #eceae4;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground: #16171b;
-      --panel: #1d1e23;
-      --line: #2e3038;
-      --ink: #e6e6e4;
-      --dim: #9b9da6;
-      --faint: #6e7079;
-      --accent: #8aa2f2;
-      --added: #6cc08a;
-      --removed: #e08373;
-      --iface: #d6a24c;
-      --body: #9b9da6;
-      --mark: #262830;
+      --ground: #16171b; --panel: #1d1e23; --line: #2e3038; --ink: #e6e6e4;
+      --dim: #9b9da6; --faint: #6e7079; --accent: #8aa2f2; --added: #6cc08a;
+      --removed: #e08373; --iface: #d6a24c; --body: #71737c; --mark: #262830;
     }
   }
   :root[data-theme="dark"] {
     --ground: #16171b; --panel: #1d1e23; --line: #2e3038; --ink: #e6e6e4;
     --dim: #9b9da6; --faint: #6e7079; --accent: #8aa2f2; --added: #6cc08a;
-    --removed: #e08373; --iface: #d6a24c; --body: #9b9da6; --mark: #262830;
+    --removed: #e08373; --iface: #d6a24c; --body: #71737c; --mark: #262830;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--ground); color: var(--ink);
-    font: 14px/1.5 var(--ui); -webkit-font-smoothing: antialiased;
+    font: 14px/1.5 var(--ui); -webkit-font-smoothing: antialiased; overflow: hidden;
   }
   header {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px;
-    padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
   }
   header h1 { font: 600 15px/1 var(--ui); margin: 0; letter-spacing: .02em; }
   header .rev { font-family: var(--mono); font-size: 12px; color: var(--dim); }
@@ -60,13 +51,21 @@
   .controls label { font-size: 12px; color: var(--dim); display: inline-flex; gap: 5px; align-items: center; }
   input[type="search"] {
     font: 13px var(--ui); padding: 5px 9px; border: 1px solid var(--line);
-    border-radius: 6px; background: var(--ground); color: var(--ink); min-width: 180px; flex: 1 1 180px;
+    border-radius: 6px; background: var(--ground); color: var(--ink); min-width: 160px; flex: 1 1 160px;
   }
-  input:focus-visible, button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .views { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .views button {
+    font: 12px var(--ui); padding: 5px 11px; border: 0; background: var(--ground);
+    color: var(--dim); cursor: pointer;
+  }
+  .views button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  main { display: grid; grid-template-columns: minmax(320px, 1.1fr) minmax(300px, 1fr); height: calc(100% - 92px); }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } }
+  main { display: grid; grid-template-columns: minmax(320px, 1.05fr) minmax(300px, 1fr); height: calc(100% - 96px); }
+  main.graph { grid-template-columns: minmax(0, 1fr) 340px; }
+  @media (max-width: 860px) { main, main.graph { grid-template-columns: 1fr; } }
   #tree { overflow: auto; padding: 8px 0 40px; border-right: 1px solid var(--line); }
+  #graph { position: relative; overflow: hidden; border-right: 1px solid var(--line); background: var(--ground); }
   #detail { overflow: auto; padding: 18px 20px 60px; }
 
   .row {
@@ -84,8 +83,40 @@
   .removed .glyph { color: var(--removed); }
   .removed .name { color: var(--removed); text-decoration: line-through; text-decoration-thickness: 1px; }
   .signature .glyph { color: var(--iface); }
-  .kids { margin: 0; padding: 0; }
-  .kids .row { padding-left: 0; }
+
+  /* the graph */
+  svg.map { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  svg.map.dragging { cursor: grabbing; }
+  .edge { fill: none; stroke: var(--body); stroke-width: 1.2; }
+  .edge.iface { stroke: var(--iface); stroke-width: 1.6; }
+  .edge.back { stroke: var(--removed); stroke-dasharray: 5 3; }
+  .edge.body { stroke-dasharray: 3 3; }
+  .edge.fade { opacity: .12; }
+  .edge.lit { stroke-width: 2.4; }
+  .node rect {
+    fill: var(--panel); stroke: var(--line); stroke-width: 1.5; rx: 5;
+  }
+  .node text { font-family: var(--mono); font-size: 11px; fill: var(--ink); dominant-baseline: middle; }
+  .node .tag { font-family: var(--ui); font-size: 9px; fill: var(--faint); }
+  .node.added rect { stroke: var(--added); }
+  .node.removed rect { stroke: var(--removed); stroke-dasharray: 4 2; }
+  .node.signature rect { stroke: var(--iface); stroke-width: 2.2; }
+  .node { cursor: pointer; }
+  .node.fade { opacity: .22; }
+  .node.sel rect { stroke: var(--accent); stroke-width: 2.6; fill: var(--mark); }
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap;
+    background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 10px; font-size: 11px; color: var(--dim);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 18px; height: 0; border-top-width: 2px; border-top-style: solid; display: inline-block; }
+  .zoomers { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
+  .zoomers button {
+    font: 12px var(--ui); width: 28px; height: 26px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--dim); border-radius: 6px; cursor: pointer;
+  }
+  .zoomers button.wide { width: auto; padding: 0 9px; }
 
   .sec { font: 600 11px/1 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 22px 0 8px; }
   #detail h2 { font: 600 16px/1.3 var(--ui); margin: 0 0 2px; word-break: break-word; }
@@ -132,12 +163,14 @@
 <script>
 (function () {
   "use strict";
+  var NS = "http://www.w3.org/2000/svg";
   var el = document.getElementById("seam-data");
   var data = null;
   try { data = JSON.parse((el && el.textContent) || "null"); } catch (e) { data = null; }
 
   var GLYPH = { added: "+", removed: "−", signature: "~", body: "·" };
   var WORD = { added: "added", removed: "removed", signature: "interface changed", body: "body only" };
+  var NW = 168, NH = 26, COL = 232, ROW = 38;
 
   function h(tag, cls, text) {
     var n = document.createElement(tag);
@@ -145,16 +178,24 @@
     if (text != null) n.textContent = text;
     return n;
   }
+  function s(tag, cls) {
+    var n = document.createElementNS(NS, tag);
+    if (cls) n.setAttribute("class", cls);
+    return n;
+  }
   function baseName(p) { return p.split("/").pop(); }
+  function label(d) { return d.class ? d.class + "." + d.name : d.name; }
+  function cut(t, n) { return t.length > n ? t.slice(0, n - 1) + "…" : t; }
 
   if (!data) { showDrop(); return; }
   start(data);
 
   function showDrop() {
+    document.body.style.overflow = "auto";
     var d = h("div"); d.id = "drop";
     d.appendChild(h("h2", null, "Drop a seam graph here"));
     var p = h("p", "hint");
-    p.innerHTML = "Run <code>seam main.. --json &gt; graph.json</code> and drop the file on this page, or paste the JSON with ⌘V.";
+    p.innerHTML = "Run <code>seam main... --json &gt; graph.json</code> and drop the file on this page, or paste the JSON with ⌘V.";
     d.appendChild(p);
     document.body.appendChild(d);
     document.addEventListener("dragover", function (e) { e.preventDefault(); });
@@ -171,97 +212,336 @@
     });
     function load(text) {
       var g; try { g = JSON.parse(text); } catch (err) { d.appendChild(h("p", "hint", "That is not JSON seam wrote.")); return; }
-      d.remove(); start(g);
+      d.remove(); document.body.style.overflow = "hidden"; start(g);
     }
   }
 
   function start(g) {
+    document.title = "seam · " + (g.rev || "a change");
     var defs = g.definitions || [], edges = g.edges || [], files = g.files || [];
     var byId = {}, out = {}, into = {}, members = {};
     defs.forEach(function (d) {
       byId[d.id] = d;
-      if (d.class) {
-        var owner = d.path + "#" + d.class;
-        (members[owner] = members[owner] || []).push(d);
-      }
+      if (d.class) (members[d.path + "#" + d.class] = members[d.path + "#" + d.class] || []).push(d);
     });
     edges.forEach(function (e) {
-      if (!byId[e.from] || !byId[e.to]) return;
+      if (!byId[e.from] || !byId[e.to] || e.from === e.to) return;
       (out[e.from] = out[e.from] || []).push(e);
       (into[e.to] = into[e.to] || []).push(e);
     });
 
-    document.title = "seam \u00b7 " + (g.rev || "a change");
-    var state = { sel: null, open: {}, q: "", hideBody: false, hideAside: false };
+    var state = { sel: null, open: {}, q: "", hideBody: false, hideAside: false, view: "graph" };
 
-    // header
     var head = h("header");
-    var h1 = h("h1", null, "seam");
-    head.appendChild(h1);
+    head.appendChild(h("h1", null, "seam"));
     head.appendChild(h("span", "rev", g.rev || ""));
     var tally = h("div", "tally");
     ["added", "signature", "body", "removed"].forEach(function (k) {
       var n = defs.filter(function (d) { return d.change === k; }).length;
       if (!n) return;
-      var s = h("span", null, null);
-      s.appendChild(h("b", null, String(n)));
-      s.appendChild(document.createTextNode(" " + WORD[k]));
-      tally.appendChild(s);
+      var sp = h("span");
+      sp.appendChild(h("b", null, String(n)));
+      sp.appendChild(document.createTextNode(" " + WORD[k]));
+      tally.appendChild(sp);
     });
     head.appendChild(tally);
 
     var controls = h("div", "controls");
+    var views = h("div", "views");
+    var bGraph = h("button", null, "graph"), bTree = h("button", null, "tree");
+    bGraph.type = bTree.type = "button";
+    bGraph.addEventListener("click", function () { state.view = "graph"; draw(); });
+    bTree.addEventListener("click", function () { state.view = "tree"; draw(); });
+    views.appendChild(bGraph); views.appendChild(bTree);
+    controls.appendChild(views);
     var search = document.createElement("input");
     search.type = "search"; search.id = "seam-search"; search.placeholder = "filter by name or path";
-    search.addEventListener("input", function () { state.q = search.value.toLowerCase(); draw(); });
+    search.addEventListener("input", function () { state.q = search.value.toLowerCase(); fit = true; draw(); });
     controls.appendChild(search);
     controls.appendChild(toggle("hideBody", "only what changed shape"));
     controls.appendChild(toggle("hideAside", "source files only"));
     head.appendChild(controls);
     document.body.appendChild(head);
 
-    function toggle(key, label) {
+    function toggle(key, text) {
       var l = h("label"), c = document.createElement("input");
       c.type = "checkbox"; c.id = "seam-" + key;
-      c.addEventListener("change", function () { state[key] = c.checked; draw(); });
-      l.appendChild(c); l.appendChild(document.createTextNode(label));
+      c.addEventListener("change", function () { state[key] = c.checked; fit = true; draw(); });
+      l.appendChild(c); l.appendChild(document.createTextNode(text));
       return l;
     }
 
     var main = h("main");
     var tree = h("div"); tree.id = "tree";
+    var map = h("div"); map.id = "graph";
     var detail = h("div"); detail.id = "detail";
-    main.appendChild(tree); main.appendChild(detail);
+    main.appendChild(map); main.appendChild(tree); main.appendChild(detail);
     document.body.appendChild(main);
 
     function shown(d) {
       if (state.hideBody && d.change === "body") return false;
       if (state.hideAside && d.box && d.box.kind !== "source") return false;
-      if (state.q && (d.id + " " + d.head).toLowerCase().indexOf(state.q) < 0) return false;
+      if (state.q && (d.id + " " + (d.head || "")).toLowerCase().indexOf(state.q) < 0) return false;
       return true;
     }
 
+    // ---- the graph: layered left to right, roots on the left, what they use
+    // to the right. Cycles are cut for the layout and the cut edge is drawn
+    // dashed, so a knot is visible rather than hidden by the drawing.
+    var fit = true, view = { k: 1, x: 0, y: 0 }, svg, world;
+
+    function layout() {
+      var ns = defs.filter(function (d) { return !d.class && shown(d); });
+      var ids = {}; ns.forEach(function (d) { ids[d.id] = true; });
+      var E = edges.filter(function (e) { return ids[e.from] && ids[e.to] && e.from !== e.to; });
+      var o = {}, i = {};
+      E.forEach(function (e) { (o[e.from] = o[e.from] || []).push(e); (i[e.to] = i[e.to] || []).push(e); });
+
+      // cut cycles: an edge onto a node still open on the stack is a back edge
+      var mark = {}, back = {};
+      ns.forEach(function (d) {
+        if (mark[d.id]) return;
+        var stack = [[d.id, 0]];
+        mark[d.id] = 1;
+        while (stack.length) {
+          var top = stack[stack.length - 1], id = top[0], list = o[id] || [];
+          if (top[1] >= list.length) { mark[id] = 2; stack.pop(); continue; }
+          var e = list[top[1]++];
+          if (mark[e.to] === 1) { back[e.from + ">" + e.to] = true; continue; }
+          if (!mark[e.to]) { mark[e.to] = 1; stack.push([e.to, 0]); }
+        }
+      });
+      var F = E.filter(function (e) { return !back[e.from + ">" + e.to]; });
+
+      // layers: longest path, over the acyclic part
+      var layer = {}, indeg = {};
+      ns.forEach(function (d) { layer[d.id] = 0; indeg[d.id] = 0; });
+      F.forEach(function (e) { indeg[e.to]++; });
+      var q = ns.filter(function (d) { return !indeg[d.id]; }).map(function (d) { return d.id; });
+      while (q.length) {
+        var n = q.shift();
+        (o[n] || []).forEach(function (e) {
+          if (back[e.from + ">" + e.to]) return;
+          if (layer[e.to] < layer[n] + 1) layer[e.to] = layer[n] + 1;
+          if (--indeg[e.to] === 0) q.push(e.to);
+        });
+      }
+
+      // components, so unrelated stories sit apart instead of interleaved
+      var comp = {}, cn = 0;
+      ns.forEach(function (d) {
+        if (comp[d.id] != null) return;
+        var c = cn++, stack = [d.id];
+        comp[d.id] = c;
+        while (stack.length) {
+          var id = stack.pop();
+          ((o[id] || []).concat(i[id] || [])).forEach(function (e) {
+            var other = e.from === id ? e.to : e.from;
+            if (comp[other] == null) { comp[other] = c; stack.push(other); }
+          });
+        }
+      });
+
+      // order inside each layer: reading order first, then two barycentre
+      // passes so the arrows cross as little as cheaply possible
+      var rows = {};
+      ns.slice().sort(function (a, b) {
+        if (comp[a.id] !== comp[b.id]) return comp[a.id] - comp[b.id];
+        if (a.path !== b.path) return a.path < b.path ? -1 : 1;
+        return (a.start || 0) - (b.start || 0);
+      }).forEach(function (d) {
+        var k = comp[d.id] + ":" + layer[d.id];
+        (rows[k] = rows[k] || []).push(d);
+      });
+      var idx = {};
+      Object.keys(rows).forEach(function (k) { rows[k].forEach(function (d, n) { idx[d.id] = n; }); });
+      for (var pass = 0; pass < 3; pass++) {
+        Object.keys(rows).forEach(function (k) {
+          rows[k].sort(function (a, b) { return bary(a, pass % 2 === 0 ? i : o) - bary(b, pass % 2 === 0 ? i : o); })
+            .forEach(function (d, n) { idx[d.id] = n; });
+        });
+      }
+      function bary(d, adj) {
+        var list = adj[d.id] || [];
+        if (!list.length) return idx[d.id];
+        var t = 0;
+        list.forEach(function (e) { t += idx[e.from === d.id ? e.to : e.from] || 0; });
+        return t / list.length;
+      }
+
+      // pack: each component under the one before it
+      var top = {}, y = {}, offset = 0;
+      for (var c = 0; c < cn; c++) {
+        var tallest = 0;
+        Object.keys(rows).forEach(function (k) {
+          if (k.indexOf(c + ":") !== 0) return;
+          if (rows[k].length > tallest) tallest = rows[k].length;
+        });
+        top[c] = offset;
+        offset += tallest + 1;
+      }
+      var placed = ns.map(function (d) {
+        return {
+          def: d,
+          x: layer[d.id] * COL,
+          y: (top[comp[d.id]] + idx[d.id]) * ROW
+        };
+      });
+      var at = {}; placed.forEach(function (p) { at[p.def.id] = p; });
+      return { nodes: placed, edges: E, at: at, back: back };
+    }
+
+    function drawGraph() {
+      map.textContent = "";
+      var L = layout();
+      if (!L.nodes.length) {
+        var p = h("p", "empty", "Nothing matches that filter.");
+        p.style.padding = "20px";
+        map.appendChild(p);
+        return;
+      }
+      svg = s("svg", "map");
+      world = s("g");
+      var defsEl = s("defs");
+      [["arrow", "var(--body)"], ["arrow-i", "var(--iface)"], ["arrow-b", "var(--removed)"]].forEach(function (a) {
+        var m = s("marker");
+        m.setAttribute("id", a[0]); m.setAttribute("viewBox", "0 0 8 8");
+        m.setAttribute("refX", "7"); m.setAttribute("refY", "4");
+        m.setAttribute("markerWidth", "6"); m.setAttribute("markerHeight", "6");
+        m.setAttribute("orient", "auto-start-reverse");
+        var path = s("path");
+        path.setAttribute("d", "M0,1 L7,4 L0,7 z");
+        path.setAttribute("fill", a[1]);
+        m.appendChild(path); defsEl.appendChild(m);
+      });
+      svg.appendChild(defsEl);
+      svg.appendChild(world);
+
+      var lit = state.sel, near = {};
+      if (lit) {
+        near[lit] = true;
+        (out[lit] || []).forEach(function (e) { near[e.to] = true; });
+        (into[lit] || []).forEach(function (e) { near[e.from] = true; });
+      }
+
+      var gEdges = s("g"); world.appendChild(gEdges);
+      L.edges.forEach(function (e) {
+        var a = L.at[e.from], b = L.at[e.to];
+        if (!a || !b) return;
+        var isBack = L.back[e.from + ">" + e.to];
+        var x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
+        if (isBack) { x1 = a.x; x2 = b.x + NW; }
+        var dx = Math.max(30, Math.abs(x2 - x1) / 2);
+        var path = s("path", "edge " + e.facet + (isBack ? " back" : "") +
+          (lit ? ((e.from === lit || e.to === lit) ? " lit" : " fade") : ""));
+        path.setAttribute("d", "M" + x1 + "," + y1 + " C" + (x1 + (isBack ? -dx : dx)) + "," + y1 +
+          " " + (x2 - (isBack ? -dx : dx)) + "," + y2 + " " + x2 + "," + y2);
+        path.setAttribute("marker-end", isBack ? "url(#arrow-b)" : (e.facet === "iface" ? "url(#arrow-i)" : "url(#arrow)"));
+        gEdges.appendChild(path);
+      });
+
+      var gNodes = s("g"); world.appendChild(gNodes);
+      L.nodes.forEach(function (p) {
+        var d = p.def;
+        var gn = s("g", "node " + d.change + (state.sel === d.id ? " sel" : (lit && !near[d.id] ? " fade" : "")));
+        gn.setAttribute("transform", "translate(" + p.x + "," + p.y + ")");
+        var r = s("rect");
+        r.setAttribute("width", NW); r.setAttribute("height", NH);
+        gn.appendChild(r);
+        var t = s("text");
+        t.setAttribute("x", 9); t.setAttribute("y", NH / 2);
+        t.textContent = (GLYPH[d.change] || "·") + " " + cut(label(d), 20);
+        gn.appendChild(t);
+        var tag = s("text", "tag");
+        tag.setAttribute("x", NW - 6); tag.setAttribute("y", NH / 2);
+        tag.setAttribute("text-anchor", "end");
+        tag.textContent = d.root ? "entry" : "";
+        gn.appendChild(tag);
+        var title = s("title");
+        title.textContent = d.id + "  —  " + (d.head || "");
+        gn.appendChild(title);
+        gn.addEventListener("click", function (ev) { ev.stopPropagation(); state.sel = d.id; draw(); });
+        gNodes.appendChild(gn);
+      });
+
+      map.appendChild(svg);
+
+      var box = { x1: 0, y1: 0, x2: 0, y2: 0 };
+      L.nodes.forEach(function (p) {
+        box.x2 = Math.max(box.x2, p.x + NW); box.y2 = Math.max(box.y2, p.y + NH);
+      });
+      if (fit) {
+        var w = map.clientWidth || 800, hh = map.clientHeight || 600;
+        var k = Math.min(1, Math.min((w - 40) / (box.x2 || 1), (hh - 40) / (box.y2 || 1)));
+        view = { k: Math.max(0.08, k), x: 20, y: 20 };
+        fit = false;
+      }
+      apply();
+
+      svg.addEventListener("click", function () { if (state.sel) { state.sel = null; draw(); } });
+      svg.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        var r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+        var k2 = Math.min(3, Math.max(0.05, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        view.x = mx - (mx - view.x) * (k2 / view.k);
+        view.y = my - (my - view.y) * (k2 / view.k);
+        view.k = k2; apply();
+      }, { passive: false });
+      var down = null;
+      svg.addEventListener("pointerdown", function (e) {
+        down = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+        svg.classList.add("dragging"); svg.setPointerCapture(e.pointerId);
+      });
+      svg.addEventListener("pointermove", function (e) {
+        if (!down) return;
+        view.x = down.vx + (e.clientX - down.x); view.y = down.vy + (e.clientY - down.y); apply();
+      });
+      svg.addEventListener("pointerup", function () { down = null; svg.classList.remove("dragging"); });
+
+      var z = h("div", "zoomers");
+      [["−", function () { view.k = Math.max(0.05, view.k / 1.25); apply(); }],
+       ["+", function () { view.k = Math.min(3, view.k * 1.25); apply(); }],
+       ["fit", function () { fit = true; drawGraph(); }]].forEach(function (b) {
+        var btn = h("button", b[0] === "fit" ? "wide" : null, b[0]);
+        btn.type = "button";
+        btn.addEventListener("click", function (e) { e.stopPropagation(); b[1](); });
+        z.appendChild(btn);
+      });
+      map.appendChild(z);
+
+      var lg = h("div", "legend");
+      lg.appendChild(key("var(--iface)", "solid", "named in a signature"));
+      lg.appendChild(key("var(--body)", "dashed", "named in a body"));
+      lg.appendChild(key("var(--removed)", "dashed", "cycle, cut here"));
+      var n = h("span", null, L.nodes.length + " of " + defs.length + " definitions");
+      lg.appendChild(n);
+      map.appendChild(lg);
+      function key(color, style, text) {
+        var sp = h("span"), i = h("i");
+        i.style.borderTopColor = color; i.style.borderTopStyle = style;
+        sp.appendChild(i); sp.appendChild(document.createTextNode(text));
+        return sp;
+      }
+    }
+    function apply() {
+      if (world) world.setAttribute("transform", "translate(" + view.x + "," + view.y + ") scale(" + view.k + ")");
+    }
+
+    // ---- the tree
     function kidsOf(d) {
       var ks = [];
-      (members[d.id] || []).forEach(function (m) { ks.push({ def: m, why: null }); });
+      (members[d.id] || []).forEach(function (m) { ks.push({ def: m }); });
       (out[d.id] || []).forEach(function (e) { ks.push({ def: byId[e.to], edge: e }); });
       return ks;
     }
-
-    function draw() {
+    function drawTree() {
       tree.textContent = "";
-      var roots = defs.filter(function (d) { return d.root && !d.class; });
       var listed = {};
-      roots.forEach(function (d) { row(tree, d, 0, null, {}, listed); });
-      // anything the roots never reach, so nothing in the change is out of sight
-      defs.forEach(function (d) {
-        if (listed[d.id] || d.class) return;
-        row(tree, d, 0, null, {}, listed);
-      });
+      defs.filter(function (d) { return d.root && !d.class; }).forEach(function (d) { row(tree, d, 0, null, {}, listed); });
+      defs.forEach(function (d) { if (!listed[d.id] && !d.class) row(tree, d, 0, null, {}, listed); });
       if (!tree.children.length) tree.appendChild(pad(h("p", "empty", "Nothing matches that filter.")));
       if (files.length) {
-        var t = pad(h("div", "sec", "files with no definitions read"));
-        tree.appendChild(t);
+        tree.appendChild(pad(h("div", "sec", "files with no definitions read")));
         var ul = h("ul", "files");
         files.forEach(function (f) {
           var li = h("li");
@@ -271,55 +551,50 @@
         });
         tree.appendChild(pad(ul));
       }
-      drawDetail();
     }
     function pad(node) { node.style.padding = "0 14px"; return node; }
-
     function row(parent, d, depth, edge, seen, listed) {
-      if (!d || seen[d.id]) return;
-      if (!shown(d)) return;
+      if (!d || seen[d.id] || !shown(d)) return;
       listed[d.id] = true;
       var kids = kidsOf(d).filter(function (k) { return k.def && shown(k.def) && !seen[k.def.id]; });
-      var open = !!state.open[keyOf(d, depth, parent)];
+      var open = !!state.open[d.id + "@" + depth];
       var b = h("button", "row " + d.change);
       b.type = "button";
       b.setAttribute("aria-selected", state.sel === d.id ? "true" : "false");
       b.style.paddingLeft = (10 + depth * 16) + "px";
-      var fold = h("span", "fold", kids.length ? (open ? "▾" : "▸") : "");
-      b.appendChild(fold);
+      b.appendChild(h("span", "fold", kids.length ? (open ? "▾" : "▸") : ""));
       b.appendChild(h("span", "glyph", GLYPH[d.change] || "·"));
-      var nm = h("span", "name", (d.class ? d.class + "." + d.name : d.name));
-      b.appendChild(nm);
+      b.appendChild(h("span", "name", label(d)));
       if (edge && edge.new) b.appendChild(h("span", "new", "⇢"));
       b.appendChild(h("span", "where", baseName(d.path)));
       b.addEventListener("click", function (ev) {
         state.sel = d.id;
         if (kids.length && (ev.offsetX < 22 || ev.detail === 2)) {
-          var k = keyOf(d, depth, parent);
+          var k = d.id + "@" + depth;
           state.open[k] = !state.open[k];
         }
         draw();
       });
       parent.appendChild(b);
       if (open && kids.length) {
-        var box = h("div", "kids");
         var seen2 = Object.assign({}, seen); seen2[d.id] = true;
+        var box = h("div");
         kids.forEach(function (k) { row(box, k.def, depth + 1, k.edge, seen2, listed); });
         parent.appendChild(box);
       }
     }
-    function keyOf(d, depth, parent) { return d.id + "@" + depth; }
 
+    // ---- the detail
     function drawDetail() {
       detail.textContent = "";
       var d = byId[state.sel];
       if (!d) {
         var p = h("p", "hint");
-        p.innerHTML = "Pick a definition. The list starts with the <b>entry points</b> — the definitions nothing else in this change mentions — and opening one shows what it uses, in the order it uses them.";
+        p.innerHTML = "Click a definition. Arrows run from a definition to what it uses; a <b>solid</b> arrow means the name is in the user's own signature, so a change to it carries on outward, and a <b>dashed</b> one means it is in the body, where it stops.";
         detail.appendChild(p);
         return;
       }
-      detail.appendChild(h("h2", null, d.class ? d.class + "." + d.name : d.name));
+      detail.appendChild(h("h2", null, label(d)));
       detail.appendChild(h("div", "path", d.path + (d.start ? ":" + d.start + (d.end !== d.start ? "-" + d.end : "") : "")));
       var meta = h("div", "meta");
       meta.appendChild(h("span", "chip on " + d.change, WORD[d.change] || d.change));
@@ -331,13 +606,11 @@
       if (d.staged != null) meta.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
       detail.appendChild(meta);
       if (d.head) detail.appendChild(h("pre", "head", d.head));
-
       section("uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }),
         "Nothing else in this change.");
       section("used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }),
         d.change === "body" ? "Nothing here. A body-only change with nothing above it is safe to read last."
                             : "Nothing in this change mentions it.");
-
       if (d.change === "signature" || d.change === "removed") {
         var carries = (into[d.id] || []).filter(function (e) { return e.facet === "iface"; });
         if (carries.length) {
@@ -350,7 +623,6 @@
         }
       }
     }
-
     function section(title, items, emptyText) {
       detail.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
       if (!items.length) { detail.appendChild(h("p", "empty", emptyText)); return; }
@@ -360,7 +632,7 @@
         var li = h("li"), b = h("button");
         b.type = "button";
         b.appendChild(h("span", "glyph " + it.other.change, GLYPH[it.other.change] || "·"));
-        b.appendChild(h("span", null, it.other.class ? it.other.class + "." + it.other.name : it.other.name));
+        b.appendChild(h("span", null, label(it.other)));
         b.appendChild(h("span", "facet " + it.e.facet, it.e.facet === "iface" ? "in the signature" : "in the body"));
         if (it.e.new) b.appendChild(h("span", "new", "new"));
         b.addEventListener("click", function () { state.sel = it.other.id; draw(); });
@@ -369,16 +641,30 @@
       detail.appendChild(ul);
     }
 
+    function draw() {
+      var graphing = state.view === "graph";
+      main.className = graphing ? "graph" : "";
+      map.hidden = !graphing;
+      tree.hidden = graphing;
+      bGraph.setAttribute("aria-pressed", graphing ? "true" : "false");
+      bTree.setAttribute("aria-pressed", graphing ? "false" : "true");
+      if (graphing) drawGraph(); else drawTree();
+      drawDetail();
+    }
+
     document.addEventListener("keydown", function (e) {
       if (e.target.tagName === "INPUT") return;
+      if (e.key === "/") { e.preventDefault(); search.focus(); return; }
+      if (e.key === "g") { state.view = state.view === "graph" ? "tree" : "graph"; fit = true; draw(); return; }
+      if (state.view !== "tree") return;
       var rows = Array.prototype.slice.call(tree.querySelectorAll(".row"));
       var at = rows.findIndex(function (r) { return r.getAttribute("aria-selected") === "true"; });
-      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, at + 1)].click(); }
-      else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); rows[Math.max(0, at - 1)].click(); }
+      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); if (rows.length) rows[Math.min(rows.length - 1, at + 1)].click(); }
+      else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); if (rows.length) rows[Math.max(0, at - 1)].click(); }
       else if (e.key === "l" || e.key === "h") { if (rows[at]) rows[at].dispatchEvent(new MouseEvent("click", { detail: 2, bubbles: true })); }
-      else if (e.key === "/") { e.preventDefault(); search.focus(); }
     });
 
+    window.addEventListener("resize", function () { if (state.view === "graph") { fit = true; drawGraph(); } });
     draw();
   }
 })();

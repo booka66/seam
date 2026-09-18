@@ -14,11 +14,24 @@ seam works out what a change did to the named things in it and hands that to
 whatever draws: a picker, a graph, a comment on a merge request. It ships one
 renderer of its own and no more.
 
-`--html` writes a page and opens it: the definitions in reading order, and
-clicking one shows what it uses and what uses it, each edge saying whether the
-mention sits in a signature or in a body. One self-contained file with the graph
-inside it, so it works offline and can be sent to someone. The same page
-(`share/view.html`) opened on its own takes a graph dropped or pasted onto it.
+`--html` writes a page and opens it. It opens on the **graph**: definitions as
+boxes laid out left to right, entry points on the left and what they use to the
+right, an arrow for every mention. A solid arrow is a mention in the user's own
+signature, so a change to what it points at carries on outward; a dashed one is
+in the body, where it stops; a red dashed one is a cycle, drawn where the layout
+had to cut it, so a knot shows rather than hiding. Click a box and everything but
+its neighbours dims, with its signature, its edges both ways and what it means in
+the panel. `g` swaps to the tree, drag to pan, wheel to zoom, `/` to filter.
+
+It is one self-contained file with the graph inside it, so it works offline and
+can be sent to someone. The same page (`share/view.html`) opened on its own takes
+a graph dropped or pasted onto it.
+
+One warning worth knowing about: `main..` is the two trees, which is only your
+branch while `main` is behind you. Once main has moved on, that diff is your
+change *and the undoing of every commit main has that you do not* — 21 files read
+as 1399. seam says so when it happens and points at `main...`, which is the
+branch alone.
 
 ## The model
 

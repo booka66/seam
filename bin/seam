@@ -118,7 +118,17 @@ case $rev in
             base=$(git merge-base "${l:-HEAD}" "${r:-HEAD}"); head=$(git rev-parse "${r:-HEAD}") ;;
   *..*)     l=${rev%%..*} r=${rev##*..}
             commit "${l:-HEAD}"; commit "${r:-HEAD}"
-            base=${l:-HEAD} head=${r:-HEAD} ;;
+            base=${l:-HEAD} head=${r:-HEAD}
+            # Two dots are the two trees, which is only the branch when the left
+            # side is behind the right. Once main has moved on, that diff also
+            # undoes every commit main has and yours does not: a change of 21
+            # files read as 1399. git says nothing about this; a tool for
+            # reading a change should.
+            if ! git merge-base --is-ancestor "$base" "$head" 2>/dev/null; then
+              n=$(git rev-list --count "$head..$base" 2>/dev/null)
+              printf 'seam: %s is %s commit%s ahead of %s, so %s is both your change and the undoing of theirs. %s reads your change alone.\n' \
+                "$base" "$n" "$([ "$n" = 1 ] || echo s)" "$head" "$base..$head" "${l:-HEAD}...${r:-}" >&2
+            fi ;;
   *)        commit "$rev"; head=$rev; base=$(git rev-parse -q --verify "$rev^" 2>/dev/null || empty) ;;
 esac
 

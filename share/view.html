@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seam</title>
+<style>
+  :root {
+    --ground: #f7f7f5;
+    --panel: #ffffff;
+    --line: #e2e1dd;
+    --ink: #1c1d22;
+    --dim: #6b6d76;
+    --faint: #93959d;
+    --accent: #3a5ccc;
+    --added: #2f7d4f;
+    --removed: #a8402f;
+    --iface: #9a6410;
+    --body: #6b6d76;
+    --mark: #eceae4;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #16171b;
+      --panel: #1d1e23;
+      --line: #2e3038;
+      --ink: #e6e6e4;
+      --dim: #9b9da6;
+      --faint: #6e7079;
+      --accent: #8aa2f2;
+      --added: #6cc08a;
+      --removed: #e08373;
+      --iface: #d6a24c;
+      --body: #9b9da6;
+      --mark: #262830;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #16171b; --panel: #1d1e23; --line: #2e3038; --ink: #e6e6e4;
+    --dim: #9b9da6; --faint: #6e7079; --accent: #8aa2f2; --added: #6cc08a;
+    --removed: #e08373; --iface: #d6a24c; --body: #9b9da6; --mark: #262830;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 14px/1.5 var(--ui); -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px;
+    padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font: 600 15px/1 var(--ui); margin: 0; letter-spacing: .02em; }
+  header .rev { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .tally { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; font-size: 12px; color: var(--dim); }
+  .tally b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; width: 100%; }
+  .controls label { font-size: 12px; color: var(--dim); display: inline-flex; gap: 5px; align-items: center; }
+  input[type="search"] {
+    font: 13px var(--ui); padding: 5px 9px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--ground); color: var(--ink); min-width: 180px; flex: 1 1 180px;
+  }
+  input:focus-visible, button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  main { display: grid; grid-template-columns: minmax(320px, 1.1fr) minmax(300px, 1fr); height: calc(100% - 92px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } }
+  #tree { overflow: auto; padding: 8px 0 40px; border-right: 1px solid var(--line); }
+  #detail { overflow: auto; padding: 18px 20px 60px; }
+
+  .row {
+    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+    padding: 3px 14px 3px 0; border: 0; background: none; color: inherit;
+    font: 13px var(--ui); cursor: pointer;
+  }
+  .row:hover { background: var(--mark); }
+  .row[aria-selected="true"] { background: var(--mark); box-shadow: inset 3px 0 0 var(--accent); }
+  .fold { width: 14px; flex: none; color: var(--faint); font-size: 10px; text-align: center; }
+  .glyph { flex: none; width: 12px; text-align: center; font-family: var(--mono); font-weight: 600; }
+  .name { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .where { color: var(--faint); font-size: 11px; margin-left: auto; white-space: nowrap; padding-left: 10px; }
+  .added .glyph, .added .name { color: var(--added); }
+  .removed .glyph { color: var(--removed); }
+  .removed .name { color: var(--removed); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .signature .glyph { color: var(--iface); }
+  .kids { margin: 0; padding: 0; }
+  .kids .row { padding-left: 0; }
+
+  .sec { font: 600 11px/1 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 22px 0 8px; }
+  #detail h2 { font: 600 16px/1.3 var(--ui); margin: 0 0 2px; word-break: break-word; }
+  pre.head {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55; margin: 12px 0 0;
+    padding: 10px 12px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 7px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    font: 11px/1 var(--ui); padding: 4px 7px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .chip.on { border-color: currentColor; }
+  .chip.added { color: var(--added); } .chip.removed { color: var(--removed); }
+  .chip.signature { color: var(--iface); } .chip.root { color: var(--accent); }
+  .path { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-top: 6px; word-break: break-all; }
+  .edges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .edges button {
+    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+    background: none; border: 0; padding: 4px 6px; border-radius: 5px; color: inherit;
+    font: 12.5px var(--mono); cursor: pointer;
+  }
+  .edges button:hover { background: var(--mark); }
+  .facet { font: 10px/1 var(--ui); letter-spacing: .04em; text-transform: uppercase; flex: none; }
+  .facet.iface { color: var(--iface); }
+  .facet.body { color: var(--body); }
+  .new { color: var(--accent); font-size: 11px; flex: none; }
+  .empty { color: var(--faint); font-size: 12.5px; }
+  .hint { color: var(--dim); font-size: 12.5px; max-width: 60ch; }
+  .hint code { font-family: var(--mono); font-size: 12px; background: var(--mark); padding: 1px 4px; border-radius: 4px; }
+  #drop {
+    margin: 60px auto; max-width: 52ch; padding: 32px; text-align: center;
+    border: 1px dashed var(--line); border-radius: 12px; background: var(--panel);
+  }
+  #drop h2 { font-size: 15px; margin: 0 0 8px; }
+  .files { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .files li { padding: 2px 0; display: flex; gap: 10px; }
+  .files .n { font-variant-numeric: tabular-nums; color: var(--faint); }
+</style>
+</head>
+<body>
+<!--SEAM DATA-->
+<script>
+(function () {
+  "use strict";
+  var el = document.getElementById("seam-data");
+  var data = null;
+  try { data = JSON.parse((el && el.textContent) || "null"); } catch (e) { data = null; }
+
+  var GLYPH = { added: "+", removed: "−", signature: "~", body: "·" };
+  var WORD = { added: "added", removed: "removed", signature: "interface changed", body: "body only" };
+
+  function h(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function baseName(p) { return p.split("/").pop(); }
+
+  if (!data) { showDrop(); return; }
+  start(data);
+
+  function showDrop() {
+    var d = h("div"); d.id = "drop";
+    d.appendChild(h("h2", null, "Drop a seam graph here"));
+    var p = h("p", "hint");
+    p.innerHTML = "Run <code>seam main.. --json &gt; graph.json</code> and drop the file on this page, or paste the JSON with ⌘V.";
+    d.appendChild(p);
+    document.body.appendChild(d);
+    document.addEventListener("dragover", function (e) { e.preventDefault(); });
+    document.addEventListener("drop", function (e) {
+      e.preventDefault();
+      var f = e.dataTransfer && e.dataTransfer.files[0];
+      if (!f) return;
+      var r = new FileReader();
+      r.onload = function () { load(r.result); };
+      r.readAsText(f);
+    });
+    document.addEventListener("paste", function (e) {
+      load((e.clipboardData || window.clipboardData).getData("text"));
+    });
+    function load(text) {
+      var g; try { g = JSON.parse(text); } catch (err) { d.appendChild(h("p", "hint", "That is not JSON seam wrote.")); return; }
+      d.remove(); start(g);
+    }
+  }
+
+  function start(g) {
+    var defs = g.definitions || [], edges = g.edges || [], files = g.files || [];
+    var byId = {}, out = {}, into = {}, members = {};
+    defs.forEach(function (d) {
+      byId[d.id] = d;
+      if (d.class) {
+        var owner = d.path + "#" + d.class;
+        (members[owner] = members[owner] || []).push(d);
+      }
+    });
+    edges.forEach(function (e) {
+      if (!byId[e.from] || !byId[e.to]) return;
+      (out[e.from] = out[e.from] || []).push(e);
+      (into[e.to] = into[e.to] || []).push(e);
+    });
+
+    document.title = "seam \u00b7 " + (g.rev || "a change");
+    var state = { sel: null, open: {}, q: "", hideBody: false, hideAside: false };
+
+    // header
+    var head = h("header");
+    var h1 = h("h1", null, "seam");
+    head.appendChild(h1);
+    head.appendChild(h("span", "rev", g.rev || ""));
+    var tally = h("div", "tally");
+    ["added", "signature", "body", "removed"].forEach(function (k) {
+      var n = defs.filter(function (d) { return d.change === k; }).length;
+      if (!n) return;
+      var s = h("span", null, null);
+      s.appendChild(h("b", null, String(n)));
+      s.appendChild(document.createTextNode(" " + WORD[k]));
+      tally.appendChild(s);
+    });
+    head.appendChild(tally);
+
+    var controls = h("div", "controls");
+    var search = document.createElement("input");
+    search.type = "search"; search.id = "seam-search"; search.placeholder = "filter by name or path";
+    search.addEventListener("input", function () { state.q = search.value.toLowerCase(); draw(); });
+    controls.appendChild(search);
+    controls.appendChild(toggle("hideBody", "only what changed shape"));
+    controls.appendChild(toggle("hideAside", "source files only"));
+    head.appendChild(controls);
+    document.body.appendChild(head);
+
+    function toggle(key, label) {
+      var l = h("label"), c = document.createElement("input");
+      c.type = "checkbox"; c.id = "seam-" + key;
+      c.addEventListener("change", function () { state[key] = c.checked; draw(); });
+      l.appendChild(c); l.appendChild(document.createTextNode(label));
+      return l;
+    }
+
+    var main = h("main");
+    var tree = h("div"); tree.id = "tree";
+    var detail = h("div"); detail.id = "detail";
+    main.appendChild(tree); main.appendChild(detail);
+    document.body.appendChild(main);
+
+    function shown(d) {
+      if (state.hideBody && d.change === "body") return false;
+      if (state.hideAside && d.box && d.box.kind !== "source") return false;
+      if (state.q && (d.id + " " + d.head).toLowerCase().indexOf(state.q) < 0) return false;
+      return true;
+    }
+
+    function kidsOf(d) {
+      var ks = [];
+      (members[d.id] || []).forEach(function (m) { ks.push({ def: m, why: null }); });
+      (out[d.id] || []).forEach(function (e) { ks.push({ def: byId[e.to], edge: e }); });
+      return ks;
+    }
+
+    function draw() {
+      tree.textContent = "";
+      var roots = defs.filter(function (d) { return d.root && !d.class; });
+      var listed = {};
+      roots.forEach(function (d) { row(tree, d, 0, null, {}, listed); });
+      // anything the roots never reach, so nothing in the change is out of sight
+      defs.forEach(function (d) {
+        if (listed[d.id] || d.class) return;
+        row(tree, d, 0, null, {}, listed);
+      });
+      if (!tree.children.length) tree.appendChild(pad(h("p", "empty", "Nothing matches that filter.")));
+      if (files.length) {
+        var t = pad(h("div", "sec", "files with no definitions read"));
+        tree.appendChild(t);
+        var ul = h("ul", "files");
+        files.forEach(function (f) {
+          var li = h("li");
+          li.appendChild(h("span", "n", "+" + (f.added || 0) + " −" + (f.removed || 0)));
+          li.appendChild(h("span", null, f.path));
+          ul.appendChild(li);
+        });
+        tree.appendChild(pad(ul));
+      }
+      drawDetail();
+    }
+    function pad(node) { node.style.padding = "0 14px"; return node; }
+
+    function row(parent, d, depth, edge, seen, listed) {
+      if (!d || seen[d.id]) return;
+      if (!shown(d)) return;
+      listed[d.id] = true;
+      var kids = kidsOf(d).filter(function (k) { return k.def && shown(k.def) && !seen[k.def.id]; });
+      var open = !!state.open[keyOf(d, depth, parent)];
+      var b = h("button", "row " + d.change);
+      b.type = "button";
+      b.setAttribute("aria-selected", state.sel === d.id ? "true" : "false");
+      b.style.paddingLeft = (10 + depth * 16) + "px";
+      var fold = h("span", "fold", kids.length ? (open ? "▾" : "▸") : "");
+      b.appendChild(fold);
+      b.appendChild(h("span", "glyph", GLYPH[d.change] || "·"));
+      var nm = h("span", "name", (d.class ? d.class + "." + d.name : d.name));
+      b.appendChild(nm);
+      if (edge && edge.new) b.appendChild(h("span", "new", "⇢"));
+      b.appendChild(h("span", "where", baseName(d.path)));
+      b.addEventListener("click", function (ev) {
+        state.sel = d.id;
+        if (kids.length && (ev.offsetX < 22 || ev.detail === 2)) {
+          var k = keyOf(d, depth, parent);
+          state.open[k] = !state.open[k];
+        }
+        draw();
+      });
+      parent.appendChild(b);
+      if (open && kids.length) {
+        var box = h("div", "kids");
+        var seen2 = Object.assign({}, seen); seen2[d.id] = true;
+        kids.forEach(function (k) { row(box, k.def, depth + 1, k.edge, seen2, listed); });
+        parent.appendChild(box);
+      }
+    }
+    function keyOf(d, depth, parent) { return d.id + "@" + depth; }
+
+    function drawDetail() {
+      detail.textContent = "";
+      var d = byId[state.sel];
+      if (!d) {
+        var p = h("p", "hint");
+        p.innerHTML = "Pick a definition. The list starts with the <b>entry points</b> — the definitions nothing else in this change mentions — and opening one shows what it uses, in the order it uses them.";
+        detail.appendChild(p);
+        return;
+      }
+      detail.appendChild(h("h2", null, d.class ? d.class + "." + d.name : d.name));
+      detail.appendChild(h("div", "path", d.path + (d.start ? ":" + d.start + (d.end !== d.start ? "-" + d.end : "") : "")));
+      var meta = h("div", "meta");
+      meta.appendChild(h("span", "chip on " + d.change, WORD[d.change] || d.change));
+      if (d.root) meta.appendChild(h("span", "chip on root", "entry point"));
+      if (d.exported) meta.appendChild(h("span", "chip", "exported"));
+      meta.appendChild(h("span", "chip", d.kind));
+      if (d.box && d.box.kind !== "source") meta.appendChild(h("span", "chip", d.box.kind));
+      if (d.added || d.removed) meta.appendChild(h("span", "chip", "+" + (d.added || 0) + " −" + (d.removed || 0)));
+      if (d.staged != null) meta.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
+      detail.appendChild(meta);
+      if (d.head) detail.appendChild(h("pre", "head", d.head));
+
+      section("uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }),
+        "Nothing else in this change.");
+      section("used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }),
+        d.change === "body" ? "Nothing here. A body-only change with nothing above it is safe to read last."
+                            : "Nothing in this change mentions it.");
+
+      if (d.change === "signature" || d.change === "removed") {
+        var carries = (into[d.id] || []).filter(function (e) { return e.facet === "iface"; });
+        if (carries.length) {
+          var n = h("p", "hint");
+          n.style.marginTop = "18px";
+          n.textContent = "Its interface changed and " + carries.length + " " +
+            (carries.length === 1 ? "definition names" : "definitions name") +
+            " it in their own signature, so the change carries on past them.";
+          detail.appendChild(n);
+        }
+      }
+    }
+
+    function section(title, items, emptyText) {
+      detail.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
+      if (!items.length) { detail.appendChild(h("p", "empty", emptyText)); return; }
+      var ul = h("ul", "edges");
+      items.forEach(function (it) {
+        if (!it.other) return;
+        var li = h("li"), b = h("button");
+        b.type = "button";
+        b.appendChild(h("span", "glyph " + it.other.change, GLYPH[it.other.change] || "·"));
+        b.appendChild(h("span", null, it.other.class ? it.other.class + "." + it.other.name : it.other.name));
+        b.appendChild(h("span", "facet " + it.e.facet, it.e.facet === "iface" ? "in the signature" : "in the body"));
+        if (it.e.new) b.appendChild(h("span", "new", "new"));
+        b.addEventListener("click", function () { state.sel = it.other.id; draw(); });
+        li.appendChild(b); ul.appendChild(li);
+      });
+      detail.appendChild(ul);
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (e.target.tagName === "INPUT") return;
+      var rows = Array.prototype.slice.call(tree.querySelectorAll(".row"));
+      var at = rows.findIndex(function (r) { return r.getAttribute("aria-selected") === "true"; });
+      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, at + 1)].click(); }
+      else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); rows[Math.max(0, at - 1)].click(); }
+      else if (e.key === "l" || e.key === "h") { if (rows[at]) rows[at].dispatchEvent(new MouseEvent("click", { detail: 2, bubbles: true })); }
+      else if (e.key === "/") { e.preventDefault(); search.focus(); }
+    });
+
+    draw();
+  }
+})();
+</script>
+</body>
+</html>

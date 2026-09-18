@@ -5,11 +5,20 @@ A change, read by definition rather than by file.
 ```
 seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
+seam HEAD~..HEAD --html     that graph in a page you can click through
+seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam worktree               what is changed against HEAD, staged or not
 ```
 
-seam draws nothing. It works out what a change did to the named things in it and
-hands that to whatever draws: a picker, a graph, a comment on a merge request.
+seam works out what a change did to the named things in it and hands that to
+whatever draws: a picker, a graph, a comment on a merge request. It ships one
+renderer of its own and no more.
+
+`--html` writes a page and opens it: the definitions in reading order, and
+clicking one shows what it uses and what uses it, each edge saying whether the
+mention sits in a signature or in a body. One self-contained file with the graph
+inside it, so it works offline and can be sent to someone. The same page
+(`share/view.html`) opened on its own takes a graph dropped or pasted onto it.
 
 ## The model
 
@@ -37,6 +46,53 @@ seam has a language for, `git diff -U0` says which lines moved, and a definition
 is listed when a changed line falls inside it — the comment block right above it
 counting as inside. The text before the body is compared across the two sides,
 and that is what "the interface changed" means. Same answer every time.
+
+## Reading the score
+
+`--score` is not a quality grade, and there is no single number: one number hides
+which of eight different problems you have, and rewards gaming whichever one is
+cheapest to move. Each line is a count, with the definition to blame:
+
+```
+seam  main..  ·  195 definitions, 171 edges
+
+  stories   46 to follow                  bad   entry points with something under them
+  loose     55 of 194 on their own        ok    changed definitions nothing else changed touches
+  knots     none                          ok    nothing in the change depends on itself
+  chain     7 deep                        look  definitions followed from one entry point
+  carry     17 of 98 changed or gone      bad   ReturnCarrierOption is named in 7 other signatures
+  heaviest  90 lines in one               ok    reviewsRoutes, on its own
+  spread    139 files, 79 directories     bad   files the change touches at all
+  safe      86 of 194 body only           ok    nothing outside them can break because of them
+
+  hard to review as one change
+```
+
+The verdict is the worst line, not an average, because a change with one terrible
+dimension is hard to review however tidy the rest is. What each line means, and
+why it is worth counting:
+
+- **stories** — entry points with something under them. Four stories in one
+  branch is four reviews. This is the line that says *split the PR*.
+- **loose** — definitions nothing else in the change touches. A change made
+  mostly of these is a sweep (a rename, a lint fix) rather than a change; that is
+  fine, but it wants reviewing as one.
+- **knots** — a cycle. seam gives every definition an entry point to be read
+  from, so an entry point that something else mentions is one it had to cut a
+  cycle at. Not a style opinion: you cannot read either of those definitions
+  first.
+- **chain** — the longest run a reader follows from one entry point.
+- **carry** — changed interfaces that something else names in *its own*
+  signature, so the change does not stop there. The widest one is the blast
+  radius, and the best guess at what a reviewer will miss.
+- **heaviest** — the most changed lines in a single definition.
+- **spread** — files and directories, the ones seam read no definitions from
+  included.
+- **safe** — body-only changes, which nothing outside them can break. A change
+  that is mostly this is the cheap kind, and it is never rated.
+
+The thresholds are what a reviewer can carry, not measurements of anything, and
+they sit at the top of `share/score.jq` to be argued with.
 
 ## Extending it
 

@@ -99,6 +99,34 @@ expect worktree/staged-only "$(wt Pair)" "10"
 expect worktree/staged-and-not "$(wt usePair)" "11"
 expect worktree/untracked "$(wt brand)" "01"
 
+# --- the score: what makes a change hard to read. Counts, not a judgement, so
+# each line is checked against the fixture rather than against a feeling.
+sc=$tmp/score.txt
+seam "$base..$head" --score > "$sc"
+score() { awk -v k="$1" '$1 == k { $1 = ""; sub(/^ +/, ""); print }' "$sc"; }
+expect score/stories "$(score stories | cut -d' ' -f1-2)" "3 to"
+expect score/knots "$(score knots | cut -d' ' -f1)" "none"
+expect score/chain "$(score chain | cut -d' ' -f1-2)" "3 deep"
+expect score/carry "$(score carry | awk '{ print $1, $3 }')" "1 3"
+expect score/safe "$(score safe | cut -d' ' -f1-3)" "1 of 10"
+expect score/verdict "$(tail -1 "$sc" | sed 's/^ *//')" "reads as one thing"
+
+# --- the page it ships. The data goes in where the marker is, and a string in
+# the code being read must not be able to close the script tag.
+p=$tmp/page.html
+seam "$base..$head" --html > "$p"
+expect html/is-a-page "$(head -1 "$p")" "<!doctype html>"
+expect html/carries-the-graph "$(grep -c 'id="seam-data"' "$p")" "1"
+expect html/same-graph "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$p" | sed 's|<\\/|</|g' | jq -r '.definitions | length')" "$(jq -r '.definitions | length' "$g")"
+# A string in the code being read must not be able to close the script tag: the
+# page carries the graph as JSON, and </ in it is escaped.
+printf 'export const closes = "</script>";\n' > tag.ts
+git add tag.ts && git commit -qm tag
+seam "$head..$(git rev-parse HEAD)" --html > "$tmp/tag.html"
+expect html/escapes-close "$(sed -n '/id="seam-data"/p' "$tmp/tag.html" | grep -c '</')" "0"
+expect html/still-json "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/tag.html" | sed 's|<\\/|</|g' | jq -r '.definitions[] | select(.name == "closes") | .head')" 'const closes = "</script>";'
+git reset -q --hard "$head"
+
 # --- the language files
 expect lang/languages "$(seam --languages)" "$(printf 'typescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "22"

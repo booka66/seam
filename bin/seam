@@ -1,6 +1,8 @@
 #!/bin/sh
 # seam <rev>              what a change does, by definition rather than by file
 # seam <rev> --json       the same as a graph: definitions, edges, boxes
+# seam <rev> --html       that graph in a page you can click through, opened
+# seam <rev> --score      what makes the change hard to read, and how hard
 # seam --languages        the languages it can read, and by which extensions
 # seam --rules            the ast-grep rules behind that, for a program that
 #                         wants to place something of its own in a declaration
@@ -91,10 +93,12 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json=
+rev= json= html= score=
 for a in "$@"; do
   case $a in
     --json) json=1 ;;
+    --html) html=1 ;;
+    --score) score=1 ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
     *) rev=$a ;;
   esac
@@ -131,6 +135,19 @@ graph() {
   cut -f1 "$1" | sort -u | $kinds > "$1.kinds"
   jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
     --rawfile kinds "$1.kinds" -f "$share/graph.jq" < "$1"
+}
+
+# --html: the graph inside share/view.html, which is the one page seam ships:
+# the definitions in reading order, and clicking one shows what it uses and what
+# uses it, each edge saying whether the mention is in a signature or a body. The
+# data goes in where the marker is, with </ escaped, so no string in the code
+# being read can close the script tag early.
+page() {
+  awk '/<!--SEAM DATA-->/ { exit } { print }' "$share/view.html"
+  printf '<script id="seam-data" type="application/json">'
+  graph "$1" | jq -c . | sed 's|</|<\\/|g'
+  printf '</script>\n'
+  awk 'f { print } /<!--SEAM DATA-->/ { f = 1 }' "$share/view.html"
 }
 
 # build: the table, one row a listed definition, in reading order, members
@@ -488,4 +505,19 @@ build() {
 
 out=$(mktemp) || exit 1
 build
-if [ -n "$json" ]; then graph "$out"; else cat "$out"; fi
+if [ -n "$html" ]; then
+  # A terminal on the other end has nothing to read a page with, so write it
+  # where it can be opened and open it; a pipe or a file gets the page itself.
+  if [ -t 1 ]; then
+    f=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
+    f=$(printf '%s' "$f" | sed 's|//*|/|g')
+    page "$out" > "$f" || exit 1
+    printf '%s\n' "$f" >&2
+    if command -v open >/dev/null 2>&1; then open "$f"
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$f"
+    fi
+  else
+    page "$out"
+  fi
+elif [ -n "$score" ]; then graph "$out" | jq -r -f "$share/score.jq"
+elif [ -n "$json" ]; then graph "$out"; else cat "$out"; fi

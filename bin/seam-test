@@ -1,0 +1,108 @@
+#!/bin/sh
+# seam-test: run seam's tests. Each one builds a throwaway repo under $TMPDIR,
+# runs seam on it and compares the output; a failure prints what was expected
+# and what came out. Exit 1 if anything failed.
+root=$(cd "$(dirname "$0")/.." && pwd)
+PATH=$root/bin:$PATH
+export PATH
+failed=0 passed=0
+expect() {
+  if [ "$2" = "$3" ]; then
+    passed=$((passed + 1))
+  else
+    failed=$((failed + 1))
+    printf 'FAIL %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"
+  fi
+}
+
+if ! command -v sg >/dev/null 2>&1; then
+  echo "seam-test: no ast-grep (brew install ast-grep); nothing to run" >&2
+  exit 1
+fi
+
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+cd "$tmp" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+
+# The fixture: a type that gains a field, a function whose signature changes, a
+# class with one member touched, a function that goes, a new arrow function with
+# a doc comment, a const and a type of one name (Effect's schema pattern), a
+# generated file that uses a changed function, and a file seam reads no
+# definitions from.
+printf 'export type Opts = { a: number };\nexport function run(o: Opts): number {\n  return o.a;\n}\nfunction helper() {\n  return 1;\n}\nexport class Box {\n  size = 1;\n  grow(): void {\n    this.size++;\n  }\n  shrink(): void {\n    this.size--;\n  }\n}\n' > lib.ts
+git add lib.ts && git commit -qm Base && base=$(git rev-parse HEAD)
+printf 'export type Opts = { a: number; b: string };\nexport function run(o: Opts, twice: boolean): number {\n  return o.a;\n}\nexport class Box {\n  size = 1;\n  grow(): void {\n    this.size += 2;\n  }\n  shrink(): void {\n    this.size--;\n  }\n}\n\n/** the new one */\nexport const fresh = (o: Opts) => o.b;\n\nconsole.log(fresh);\n\nexport function wrap(o: Opts): string {\n  return fresh(o);\n}\n' > lib.ts
+printf 'export const Pair = { a: 1 };\nexport type Pair = typeof Pair;\nexport function usePair(p: Pair) { return p; }\n' > pair.ts
+printf 'export const G = run({ a: 1 }, true);\n' > gen.generated.ts
+printf 'notes\n' > notes.md
+git add pair.ts gen.generated.ts notes.md && git commit -qam Head && head=$(git rev-parse HEAD)
+t=$tmp/table
+seam "$base..$head" > "$t"
+col() { awk -F'\t' -v n="$1" -v w="$2" '$3 == w || ($1 == w && $2 == "file") { print $n }' "$t"; }
+
+# --- the table
+expect table/order "$(awk -F'\t' '$2 != "file" && $1 == "lib.ts" { print $3 }' "$t" | tr '\n' ' ')" "run Box grow helper wrap Opts fresh "
+expect table/changes "$(awk -F'\t' '$2 != "file" && $1 == "lib.ts" { print $6 }' "$t" | tr '\n' ' ')" "signature body body removed added signature added "
+expect table/uses "$(col 18 run)" "lib.ts#Opts"
+expect table/uses-order "$(col 18 wrap)" "lib.ts#Opts|lib.ts#fresh"
+expect table/new-uses "$(col 20 wrap)" "lib.ts#Opts|lib.ts#fresh"
+expect table/roots "$(awk -F'\t' '$19 == 1 && $1 == "lib.ts" { print $3 }' "$t" | tr '\n' ' ')" "run Box helper wrap "
+expect table/member-class "$(col 4 grow)" "Box"
+expect table/exported-member "$(col 5 grow)" "1"
+expect table/removed-side "$(col 7 helper) $(col 8 helper)" "old 5"
+expect table/head "$(col 13 run)" "function run(o: Opts, twice: boolean): number"
+expect table/head-arrow "$(col 13 fresh)" "const fresh = (o: Opts)"
+# The doc comment above a declaration is part of it: fresh starts on the /**.
+expect table/doc-comment "$(col 8 fresh)" "15"
+# A const and a type of one name are two definitions; users of the name go to
+# the const, and the type sits under it.
+expect table/same-name "$(awk -F'\t' '$1 == "pair.ts" && $3 ~ /Pair$/ { print $3 ":" $18 }' "$t" | tr '\n' ' ')" "usePair:pair.ts#type Pair Pair: type Pair:pair.ts#Pair "
+# A generated file keeps to itself: no edge from it, and run stays an entry point.
+expect table/generated-isolated "$(awk -F'\t' '$1 == "gen.generated.ts" { print $3 ":" $18 ":" $19 }' "$t")" "G::1"
+# A file seam reads no definitions from still gets a row, with its counts.
+expect table/file-row "$(awk -F'\t' '$1 == "notes.md" { print $2, $6, $11, $12 }' "$t")" "file added 1 0"
+expect table/unclaimed-row "$(awk -F'\t' '$1 == "lib.ts" && $2 == "file" { print $11, $12 }' "$t")" "1 0"
+
+# --- the graph
+g=$tmp/graph.json
+seam "$base..$head" --json > "$g"
+expect json/counts "$(jq -r '"\(.definitions|length) \(.edges|length) \(.files|length)"' "$g")" "11 6 2"
+expect json/member-id "$(jq -r '.definitions[] | select(.name == "grow") | .id' "$g")" "lib.ts#Box.grow"
+expect json/base "$(jq -r '.definitions[] | select(.name == "run") | "\(.base.start) \(.base.end)"' "$g")" "2 4"
+# The facet: a mention in the user's own signature carries outward, one in its
+# body stops there.
+expect json/facet-iface "$(jq -r '.edges[] | select(.from == "lib.ts#wrap" and .to == "lib.ts#Opts") | .facet' "$g")" "iface"
+expect json/facet-body "$(jq -r '.edges[] | select(.from == "lib.ts#wrap" and .to == "lib.ts#fresh") | .facet' "$g")" "body"
+expect json/new-edge "$(jq -r '.edges[] | select(.from == "lib.ts#run") | .new' "$g")" "false"
+expect json/box "$(jq -r '.definitions[] | select(.name == "G") | .box.kind' "$g")" "gen"
+expect json/no-null-head "$(jq -r '.head | length > 0' "$g")" "true"
+expect json/worktree-flags-absent "$(jq -r '.definitions[0] | .staged' "$g")" "null"
+
+# --- the worktree, and staging by definition
+printf 'export const Pair = { a: 2 };\nexport type Pair = typeof Pair;\nexport function usePair(p: Pair) { return p + 1; }\n' > pair.ts
+git add pair.ts
+printf 'export const Pair = { a: 2 };\nexport type Pair = typeof Pair;\nexport function usePair(p: Pair) { return p + 2; }\n' > pair.ts
+printf 'export const brand = 1;\n' > new.ts
+seam worktree > "$tmp/wt"
+wt() { awk -F'\t' -v w="$1" '$3 == w { print $16 $17 }' "$tmp/wt"; }
+expect worktree/staged-only "$(wt Pair)" "10"
+expect worktree/staged-and-not "$(wt usePair)" "11"
+expect worktree/untracked "$(wt brand)" "01"
+
+# --- the language files
+expect lang/languages "$(seam --languages)" "$(printf 'typescript.yml\t.ts .tsx\ttypescript tsx')"
+expect lang/rules "$(seam --rules | grep -c '^language:')" "22"
+expect lang/awk "$(seam --awk hunks | grep -c 'function shift')" "1"
+expect lang/share "$(test -f "$(seam --share)/decls.jq" && echo yes)" "yes"
+# A rule file in the repo replaces the one seam ships under that name: this one
+# reads function declarations and nothing else.
+mkdir -p .seam/languages
+{ printf '#seam: extensions .ts\n#seam: grammars typescript\n'
+  printf 'id: fn\nlanguage: LANG\nrule:\n  kind: function_declaration\n  all:\n    - has: {field: name, pattern: $N}\n    - has: {field: body, pattern: $B}\n'; } > .seam/languages/typescript.yml
+expect lang/override "$(seam "$base..$head" | awk -F'\t' '$2 != "file" { print $3 }' | sort | tr '\n' ' ')" "helper run usePair wrap "
+rm -rf .seam
+
+printf '%d passed' "$passed"
+if [ "$failed" -gt 0 ]; then printf ', %d FAILED\n' "$failed"; exit 1; fi
+printf '\n'

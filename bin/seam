@@ -1,0 +1,415 @@
+#!/bin/sh
+# seam <rev>              what a change does, by definition rather than by file
+# seam <rev> --json       the same as a graph: definitions, edges, boxes
+# seam --languages        the languages it can read, and by which extensions
+# seam --rules            the ast-grep rules behind that, for a program that
+#                         wants to place something of its own in a declaration
+# seam --share            where seam keeps decls.jq, hunks.awk and the rest
+# seam --awk hunks        the diff reader, for a renderer that must map a line
+#                         from one side of the change to the other
+#
+# <rev> is one commit, base..head (a merge request), base...head (a branch
+# against where it left) or the word worktree (what is changed against HEAD,
+# staged or not, untracked files too).
+#
+# A definition is any self-contained named thing you would want to read a diff
+# of: a function, a class and each of its members, a type, a const. Each one
+# has an interface and a body, and the difference matters: when a definition's
+# interface changes, everything that mentions it is worth reading again; when
+# only its body changes, nothing outside it is. seam works that out from the
+# trees, not from a model. ast-grep parses both sides of every changed file it
+# has a language for (share/languages says which declarations count, and what
+# the interface is), and git diff -U0 says which lines moved; a definition is
+# listed when a changed line falls inside it (the comment block right above it
+# counts as inside), and the text before its body is compared across the two
+# sides. That is well under a second for a large change and the same answer
+# every time.
+#
+# An edge is one definition mentioning another's name. Inside the change seam
+# finds those itself, in the order they are mentioned, so reading a function
+# top to bottom reads the change in order; each kind of file (source, test,
+# generated, config) keeps to itself, since a spec mentions everything it
+# tests. References from outside the change are a renderer's business, and
+# what it knows that seam cannot: a compiler, a route table, a build graph.
+#
+# Nothing here draws anything. The table (or --json) is the whole output, and
+# a renderer reads it: otis's picker walks it as a tree, and a graph drawing
+# is the same data with the arrows kept.
+#
+# What it wants: git, ast-grep (sg) and jq. Add a language by dropping a rule
+# file in ./.seam/languages or ~/.config/seam/languages; a file there replaces
+# the one seam ships under the same name.
+share=$(cd "$(dirname "$0")/../share" && pwd)
+
+case $1 in
+  --share) printf '%s\n' "$share"; exit 0 ;;
+  --awk)
+    case $2 in hunks) cat "$share/hunks.awk"; exit 0 ;; *) echo "seam --awk hunks" >&2; exit 2 ;; esac ;;
+esac
+
+# The language files, nearest first: a repo's own, then this user's, then the
+# ones seam ships, with the first of a name winning.
+langfiles= seen=
+for d in ./.seam/languages "${XDG_CONFIG_HOME:-$HOME/.config}/seam/languages" "$share/languages"; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*.yml; do
+    [ -f "$f" ] || continue
+    n=${f##*/}
+    case " $seen " in *" $n "*) continue ;; esac
+    seen="$seen $n" langfiles="$langfiles $f"
+  done
+done
+# A language file says what it reads in #seam: lines above its rules, which
+# ast-grep never sees: the extensions its files carry and the grammars it is
+# written against, one rule set a grammar.
+lang_field() { sed -n "s/^#seam: $2 //p" "$1" | tr ' ' '\n' | sed '/^$/d'; }
+rules() {
+  first=1
+  for f in $langfiles; do
+    for g in $(lang_field "$f" grammars); do
+      [ -n "$first" ] || echo ---
+      first=
+      sed "s/^language: LANG\$/language: $g/" "$f"
+    done
+  done
+}
+# Which paths to parse at all: everything else lists as a file. A character
+# class rather than \. so the regex survives being passed to awk as a string.
+extre="[.]($(for f in $langfiles; do lang_field "$f" extensions; done | sed 's/^\.//' | sort -u | tr '\n' '|' | sed 's/|$//'))$"
+# What a file is (share/kinds.awk), unless the repo knows better: SEAM_KINDS is
+# a command reading paths on stdin and writing each back with a tab and its
+# kind. otis passes its own, which also reads what .gitattributes declares.
+kinds="${SEAM_KINDS:-awk -f $share/kinds.awk}"
+
+case $1 in
+  --rules) rules; exit 0 ;;
+  --languages)
+    for f in $langfiles; do
+      printf '%s\t%s\t%s\n' "${f##*/}" "$(lang_field "$f" extensions | tr '\n' ' ')" "$(lang_field "$f" grammars | tr '\n' ' ')"
+    done | sed 's/ \t/\t/; s/ $//'
+    exit 0 ;;
+esac
+
+rev= json=
+for a in "$@"; do
+  case $a in
+    --json) json=1 ;;
+    -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
+    *) rev=$a ;;
+  esac
+done
+[ -n "$rev" ] || { sed -n '2,8p' "$0" | sed 's/^# //' >&2; exit 2; }
+# base and head: the two trees. The worktree has no head commit; its files are
+# read where they are, from the repo root, where the paths a diff names start.
+empty() { git hash-object -t tree /dev/null; }
+case $rev in
+  worktree) base=$(git rev-parse -q --verify HEAD || empty); head=; cd "$(git rev-parse --show-toplevel)" || exit 1 ;;
+  *...*)    base=$(git merge-base "${rev%%...*}" "${rev##*...}"); head=$(git rev-parse "${rev##*...}") ;;
+  *..*)     base=${rev%%..*}; head=${rev##*..} ;;
+  *)        head=$rev; base=$(git rev-parse -q --verify "$rev^" 2>/dev/null || empty) ;;
+esac
+
+# Reading a -U0 or -U999999 diff (share/hunks.awk, and seam --awk hunks for a
+# renderer that needs the same): which lines came and went, and where a line on
+# one side sits on the other.
+hunk_awk=$(cat "$share/hunks.awk")
+
+# --json: the table as the graph, with the edges kept and each definition's box
+# named (share/graph.jq). The kinds are asked for again here rather than kept
+# from the build: it is one pass over the paths, and the table is the thing
+# every other reader wants.
+graph() {
+  cut -f1 "$1" | sort -u | $kinds > "$1.kinds"
+  jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
+    --rawfile kinds "$1.kinds" -f "$share/graph.jq" < "$1"
+}
+
+# build: the table, one row a listed definition, in reading order, members
+# right after their class:
+#   path, kind, name, class, exported, change, side, start, end, open line,
+#   added, removed, head, base start, base end, staged, unstaged, uses,
+#   root, new uses
+# then one row a file it reads no definitions from. Staged and unstaged are the
+# worktree's alone: what of each definition is in the index and what is not, so
+# a renderer can stage one definition out of a file with three other things
+# going on.
+build() {
+  tmp=$(mktemp -d) || exit 1
+  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds"' EXIT
+  if [ -n "$head" ]; then
+    git diff --name-status --no-renames "$base" "$head" > "$tmp/status"
+    git diff --numstat -M "$base" "$head" > "$tmp/numstat"
+  else
+    git --no-optional-locks diff-index --name-status --no-renames "$base" > "$tmp/status"
+    # Untracked files from status, which the untracked cache makes fast where
+    # ls-files --others walks the whole tree; it folds an untracked directory
+    # to its name, so those few are walked.
+    git --no-optional-locks status --porcelain=v1 -z 2>/dev/null | tr '\0' '\n' | sed -n 's/^?? //p' | while read -r p; do
+      case $p in */) git ls-files --others --exclude-standard -- "$p" ;; *) printf '%s\n' "$p" ;; esac
+    done | awk '{ print "?\t" $0 }' >> "$tmp/status"
+    git --no-optional-locks diff-index --numstat -M "$base" > "$tmp/numstat"
+  fi
+  # What ast-grep can read, by extension; everything else lists as a file.
+  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "D" { print $2 }' "$tmp/status" > "$tmp/new.paths"
+  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "A" && $1 != "?" { print $2 }' "$tmp/status" > "$tmp/old.paths"
+  rules=$(rules)
+  # Both trees, extracted once (one git each), parsed once (one ast-grep each,
+  # which reads a directory in parallel), then flattened to a row a match. The
+  # text rides along for the reading order, escaped by @tsv alone: jq's gsub
+  # over a 900-line class is seconds, @tsv is not.
+  for side in old new; do
+    if [ ! -s "$tmp/$side.paths" ]; then
+      echo '[]'
+    elif [ "$side" = new ] && [ -z "$head" ]; then
+      tr '\n' '\0' < "$tmp/new.paths" | xargs -0 sg scan --json=compact --inline-rules "$rules" 2>/dev/null
+    else
+      mkdir "$tmp/$side"
+      rev_=$base; [ "$side" = new ] && rev_=$head
+      tr '\n' '\0' < "$tmp/$side.paths" | xargs -0 git archive "$rev_" -- 2>/dev/null | tar -x -C "$tmp/$side" 2>/dev/null
+      (cd "$tmp/$side" && sg scan --json=compact --inline-rules "$rules" . 2>/dev/null)
+    fi |
+    jq -r --arg side "$side" -f "$share/decls.jq" >> "$tmp/decls"
+  done
+  # What each file is, for the graph: tests, generated and config files keep
+  # to themselves, since a spec mentions everything it tests and a codegen
+  # dump mentions everything, and neither should pull a source symbol off
+  # the top level.
+  cat "$tmp/new.paths" "$tmp/old.paths" | sort -u | $kinds > "$tmp/kinds"
+  : > "$tmp/hunks"
+  if [ -n "$head" ]; then
+    cat "$tmp/new.paths" "$tmp/old.paths" | sort -u | tr '\n' '\0' | xargs -0 git diff -U0 --no-renames "$base" "$head" -- > "$tmp/hunks" 2>/dev/null
+  else
+    # One diff for the tracked files; an untracked one has no index entry to
+    # diff against, so each of those is diffed against nothing on its own.
+    cat "$tmp/new.paths" "$tmp/old.paths" | sort -u > "$tmp/paths"
+    awk -F'\t' '$1 == "?" { print $2 }' "$tmp/status" | sort -u > "$tmp/untracked.paths"
+    { grep -vxF -f "$tmp/untracked.paths" "$tmp/paths" | tr '\n' '\0' | xargs -0 git --no-optional-locks diff-index --no-renames -U0 "$base" -- 2>/dev/null
+      grep -xF -f "$tmp/untracked.paths" "$tmp/paths" | while read -r p; do git diff --no-index -U0 /dev/null "$p"; done; } > "$tmp/hunks" 2>/dev/null
+  fi
+
+  awk -F'\t' '
+    FILENAME == ARGV[1] { KIND[$1] = $2; next }
+    # decls: side, path, rule, start, end, name, head, text
+    FILENAME == ARGV[2] {
+      side = $1; p = $2; r = $3
+      if (r == "export") { exported[side, p, $4] = 1; next }
+      # Comments, by the line each ends on; two on one line keep the first.
+      if (r == "comment") { if (!((side, p, $5) in cend) || $4 + 0 < cend[side, p, $5]) cend[side, p, $5] = $4 + 0; next }
+      n++; S[n] = side; P[n] = p; R[n] = r; A[n] = D[n] = $4 + 0; Z[n] = $5 + 0; NM[n] = $6; H[n] = $7; T[n] = $8
+      next
+    }
+    '"$hunk_awk"'
+    function key(i) { return P[i] SUBSEP PAR[i] SUBSEP NM[i] }
+    function emit(r,   i, k) {
+      i = rows[r]; k = key(i)
+      print P[i], R[i], NM[i], PAR[i], EXP[r], CH[r], S[i], A[i], Z[i], OPEN[r], ADD[r], DEL[r], H[i], \
+        ((k in old) ? A[old[k]] : ""), ((k in old) ? Z[old[k]] : ""), "", "", USES[r], ROOT[r] + 0, NEWU[r]
+    }
+    END {
+      # A member belongs to the class around it, on its side.
+      for (i = 1; i <= n; i++) {
+        PAR[i] = ""
+        if (R[i] != "method" && R[i] != "field") continue
+        for (j = 1; j <= n; j++)
+          if (R[j] == "class" && S[j] == S[i] && P[j] == P[i] && A[j] <= A[i] && Z[i] <= Z[j]) { PAR[i] = NM[j]; break }
+        if (PAR[i] == "") R[i] = ""
+      }
+      # The comment block right above a declaration belongs to it: its doc,
+      # or a // line or three. It runs up while each comment ends on the line
+      # before, so a blank line stops it, and so does a comment that trails
+      # the declaration before on its last line. D keeps the line the keyword
+      # is on, where enter opens and where export sits.
+      for (i = 1; i <= n; i++) if (R[i] != "") ends[S[i], P[i], Z[i]] = 1
+      for (i = 1; i <= n; i++) {
+        if (R[i] == "") continue
+        while (((S[i], P[i], A[i] - 1) in cend) && !((S[i], P[i], cend[S[i], P[i], A[i] - 1]) in ends)) A[i] = cend[S[i], P[i], A[i] - 1]
+      }
+      # TypeScript keeps types and values apart, so a type may share its
+      # name with a const (Effect'"'"'s `const X = Schema.Struct(…)` and
+      # `type X = typeof X.Type`). The type is then named "type X" on both
+      # sides, so the two are two symbols; BARE keeps the name its users
+      # mention.
+      for (i = 1; i <= n; i++) { BARE[i] = NM[i]; if (R[i] != "" && R[i] != "type" && R[i] != "interface") isval[P[i], NM[i]] = 1 }
+      for (i = 1; i <= n; i++) if ((R[i] == "type" || R[i] == "interface") && ((P[i], NM[i]) in isval)) NM[i] = "type " NM[i]
+      for (i = 1; i <= n; i++) {
+        if (R[i] == "") continue
+        k = key(i)
+        if (S[i] == "old") { old[k] = i; odel[k] = lines("", P[i], "old", A[i], Z[i]); ot[k] = touched("", P[i], "old", A[i], Z[i]) }
+        else               { new[k] = i; nadd[k] = lines("", P[i], "new", A[i], Z[i]); nt[k] = touched("", P[i], "new", A[i], Z[i]) }
+      }
+      # One row a symbol touched on either side, keyed by file, class and name.
+      # A member that changed touches its class too, so the class is always
+      # here for it to sit under.
+      for (k in new) {
+        i = new[k]
+        if (k in old) {
+          if (nt[k] + ot[k] == 0) continue
+          rows[++m] = i; CH[m] = (H[i] != H[old[k]]) ? "signature" : "body"; ADD[m] = nadd[k]; DEL[m] = odel[k]
+        } else {
+          if (!nt[k]) continue
+          rows[++m] = i; CH[m] = "added"; ADD[m] = nadd[k]; DEL[m] = 0
+        }
+        OPEN[m] = D[i]
+      }
+      for (k in old) {
+        if (k in new || !ot[k]) continue
+        j = old[k]
+        rows[++m] = j; CH[m] = "removed"; ADD[m] = 0; DEL[m] = odel[k]
+        OPEN[m] = (("", P[j], D[j]) in at) ? at["", P[j], D[j]] : 1
+      }
+      for (r = 1; r <= m; r++) {
+        i = rows[r]
+        TOP[r] = (PAR[i] == "")
+        if (TOP[r]) { at_row[key(i)] = r; EXP[r] = ((S[i], P[i], D[i]) in exported) ? 1 : 0 }
+      }
+      for (r = 1; r <= m; r++) if (!TOP[r]) { i = rows[r]; EXP[r] = EXP[at_row[P[i] SUBSEP "" SUBSEP PAR[i]]] }
+      # The call tree of the change: a top-level symbol uses another when its
+      # text mentions the other'"'"'s name, and the ones nothing else changed
+      # mentions are the roots, the entry points to read first. Each kind of
+      # file (source, test, generated, config) keeps to itself.
+      # What a symbol uses is listed in the order it mentions them, so opening
+      # a function reads it top to bottom.
+      # A const and a type of one name where one mentions the other (the
+      # type is typeof the const) read as one thing: users of the name go
+      # to the outer one, and the inner sits under it.
+      for (r = 1; r <= m; r++) if (TOP[r]) pairat[P[rows[r]], BARE[rows[r]], (NM[rows[r]] == BARE[rows[r]])] = r
+      for (r = 1; r <= m; r++) if (TOP[r] && NM[rows[r]] != BARE[rows[r]] && ((P[rows[r]], BARE[rows[r]], 1) in pairat)) {
+        q = pairat[P[rows[r]], BARE[rows[r]], 1]; nm = BARE[rows[r]]; gsub(/\$/, "\\$", nm)
+        re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
+        tt = T[rows[r]]; if (gsub(re, "&", tt) >= 2) { inner[q] = r; continue }
+        tt = T[rows[q]]; if (gsub(re, "&", tt) >= 2) inner[r] = q
+      }
+      for (r = 1; r <= m; r++) if (TOP[r]) {
+        sortkey[r] = P[rows[r]] sprintf("%08d", A[rows[r]]) S[rows[r]]
+        nu = 0
+        for (q = 1; q <= m; q++) {
+          if (q == r || !TOP[q] || KIND[P[rows[q]]] != KIND[P[rows[r]]]) continue
+          if ((q in inner) && inner[q] != r) continue
+          nm = BARE[rows[q]]
+          if (nm == "" || nm ~ /[^A-Za-z0-9_$]/) continue
+          # index() first: the regex is compiled per pair, and nearly every pair misses.
+          pos = index(T[rows[r]], nm)
+          if (pos == 0) continue
+          gsub(/\$/, "\\$", nm)
+          # Not after a dot: runner.run() is a property of runner, not the run
+          # here; a spread (...opts) is a use; a name before a colon is a key
+          # or a typed property, not a use. A declaration mentions its own
+          # name once, so the type and the const of one name use each other
+          # only on a second mention.
+          re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
+          if (T[rows[r]] !~ re) continue
+          if (nm == BARE[rows[r]]) { tt = T[rows[r]]; if (gsub(re, "&", tt) < 2) continue }
+          uses[r, ++nu] = q; usepos[r, nu] = pos; indeg[q]++
+        }
+        for (x = 1; x <= nu; x++) for (y = x + 1; y <= nu; y++) if (usepos[r, y] < usepos[r, x]) {
+          t = uses[r, x]; uses[r, x] = uses[r, y]; uses[r, y] = t
+          t = usepos[r, x]; usepos[r, x] = usepos[r, y]; usepos[r, y] = t
+        }
+        NU[r] = nu
+        for (x = 1; x <= nu; x++) { i = rows[uses[r, x]]; USES[r] = USES[r] (x > 1 ? "|" : "") P[i] "#" NM[i] }
+        # An edge is new when the base side of the user did not mention the
+        # name: an added user, or one that now calls what it did not.
+        k = key(rows[r]); ot_ = (k in old) ? T[old[k]] : ""
+        for (x = 1; x <= nu; x++) {
+          i = rows[uses[r, x]]; nm = BARE[i]; gsub(/\$/, "\\$", nm)
+          re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
+          if (!(k in old) || ot_ !~ re) NEWU[r] = NEWU[r] (NEWU[r] != "" ? "|" : "") P[i] "#" NM[i]
+        }
+      }
+      # Roots: nothing mentions them. A cycle has none, so whatever a root
+      # cannot reach gets one of its own, the first by file and line.
+      for (r = 1; r <= m; r++) if (TOP[r] && indeg[r] == 0) { ROOT[r] = 1; stack[++sp] = r }
+      for (;;) {
+        while (sp > 0) {
+          r = stack[sp--]
+          if (r in reach) continue
+          reach[r] = 1
+          for (x = 1; x <= NU[r]; x++) stack[++sp] = uses[r, x]
+        }
+        pick = 0
+        for (r = 1; r <= m; r++) if (TOP[r] && !(r in reach) && (!pick || sortkey[r] < sortkey[pick])) pick = r
+        if (!pick) break
+        ROOT[pick] = 1; stack[++sp] = pick
+      }
+      # Roots first, by file and line, then the rest the same way.
+      nout = 0
+      for (want = 1; want >= 0; want--) for (;;) {
+        pick = 0
+        for (r = 1; r <= m; r++) if (TOP[r] && !(r in placed) && (ROOT[r] + 0) == want && (!pick || sortkey[r] < sortkey[pick])) pick = r
+        if (!pick) break
+        out[++nout] = pick; placed[pick] = 1
+      }
+      OFS = "\t"
+      # What no symbol claims: an import, a top-level statement, a file with
+      # no declarations at all. It gets a file row after the symbols, with
+      # those lines alone counted, so nothing a diff has is out of reach. A
+      # blank line belongs to nobody and counts for nothing: the one after a
+      # new declaration is its separator, not a change the tree missed.
+      for (r = 1; r <= m; r++) {
+        i = rows[r]; k = key(i)
+        if (S[i] == "new") { for (l = A[i]; l <= Z[i]; l++) inrow["new", P[i], l] = 1; if (k in old) for (l = A[old[k]]; l <= Z[old[k]]; l++) inrow["old", P[i], l] = 1 }
+        else for (l = A[i]; l <= Z[i]; l++) inrow["old", P[i], l] = 1
+      }
+      for (k in add) { split(k, kk, SUBSEP); if (kk[1] != "") continue; if (!(("new", kk[2], kk[3]) in inrow) && !(("", kk[2], "new", kk[3]) in blank)) { oadd[kk[2]]++; seenf[kk[2]] = 1 } }
+      for (k in del) { split(k, kk, SUBSEP); if (kk[1] != "") continue; if (!(("old", kk[2], kk[3]) in inrow) && !(("", kk[2], "old", kk[3]) in blank)) { odel_[kk[2]]++; seenf[kk[2]] = 1 } }
+      for (o = 1; o <= nout; o++) {
+        r = out[o]; i = rows[r]
+        emit(r)
+        if (R[i] != "class") continue
+        # Its members, in line order.
+        nk = 0
+        for (q = 1; q <= m; q++) if (!TOP[q] && PAR[rows[q]] == NM[i] && P[rows[q]] == P[i] && S[rows[q]] == S[i]) kids[++nk] = q
+        for (x = 1; x <= nk; x++) for (y = x + 1; y <= nk; y++) if (A[rows[kids[y]]] < A[rows[kids[x]]]) { t = kids[x]; kids[x] = kids[y]; kids[y] = t }
+        for (x = 1; x <= nk; x++) emit(kids[x])
+      }
+      for (f in seenf) print f, "file", "", "", "", "body", "new", "", "", "", oadd[f] + 0, odel_[f] + 0, "", "", "", "", "", "", "", ""
+    }' "$tmp/kinds" "$tmp/decls" "$tmp/hunks" > "$out.new"
+  # Files this reads no symbols from, as file rows after the symbols, with
+  # the file picker's counts: whatever has no row yet.
+  awk -F'\t' "$(cat "$share/numstat.awk")"'
+    BEGIN { OFS = "\t" }
+    FILENAME == ARGV[1] { listed[$1] = 1; next }
+    FILENAME == ARGV[2] { if (NF >= 3 && $1 ~ /^[0-9]+$/) { p = numstat_path($3); add[p] = $1; del[p] = $2 }; next }
+    !($2 in listed) { print $2, "file", "", "", "", ($1 == "A" || $1 == "?" ? "added" : $1 == "D" ? "removed" : "body"), "new", "", "", "", add[$2], del[$2], "", "", "", "", "", "", "", "" }
+  ' "$out.new" "$tmp/numstat" "$tmp/status" >> "$out.new"
+  if [ -z "$head" ]; then
+    # What of each symbol is staged and what is not: the worktree against the
+    # index says unstaged, the index against base says staged. Base lines are
+    # known for a symbol base has; an added one is found in the index by
+    # shifting its worktree lines through the unstaged hunks above it.
+    git --no-optional-locks diff-files -U0 --no-renames > "$tmp/wi" 2>/dev/null
+    git --no-optional-locks diff-index --cached -U0 --no-renames "$base" > "$tmp/ih" 2>/dev/null
+    awk -F'\t' '$1 == "?" { print $2 }' "$tmp/status" > "$tmp/untracked"
+    awk -F'\t' '
+      FILENAME == ARGV[1] { rows[++m] = $0; next }
+      FILENAME == ARGV[2] { untracked[$0] = 1; next }
+      FILENAME == ARGV[3] { which = "wi" }
+      FILENAME == ARGV[4] { which = "ih" }
+      '"$hunk_awk"'
+      END {
+        OFS = "\t"
+        for (r = 1; r <= m; r++) {
+          $0 = rows[r]
+          if ($2 == "file" || $8 == "") { print; continue }
+          p = $1; s = $8 + 0; e = $9 + 0
+          # An untracked file is all unstaged; git has no diff of it yet.
+          if (p in untracked) { $16 = 0; $17 = 1; print; continue }
+          if ($7 == "old") {
+            st = touched("ih", p, "old", s, e)
+            un = touched("wi", p, "old", shift("ih", p, "old", s), shift("ih", p, "old", e))
+          } else {
+            un = touched("wi", p, "new", s, e)
+            if ($14 != "") st = touched("ih", p, "old", $14 + 0, $15 + 0)
+            else st = touched("ih", p, "new", shift("wi", p, "new", s), shift("wi", p, "new", e))
+          }
+          $16 = st; $17 = un
+          print
+        }
+      }' "$out.new" "$tmp/untracked" "$tmp/wi" "$tmp/ih" > "$out.flags" && mv "$out.flags" "$out.new"
+  fi
+  mv "$out.new" "$out"
+}
+
+out=$(mktemp) || exit 1
+build
+if [ -n "$json" ]; then graph "$out"; else cat "$out"; fi

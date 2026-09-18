@@ -17,6 +17,9 @@
 # against where it left) or the word worktree (what is changed against HEAD,
 # staged or not, untracked files too). An end left out of a range is HEAD, so
 # main.. is this branch and main...  is this branch against where it left.
+# --mr <n> in place of <rev> is GitLab merge request n, or its URL: what
+# GitLab's own diff shows, fetched from origin without checking anything out,
+# so there is nothing to clean up after. That one wants glab.
 #
 # A definition is any self-contained named thing you would want to read a diff
 # of: a function, a class and each of its members, a type, a const. Each one
@@ -98,18 +101,25 @@ esac
 
 rev= json= html= score= brief= table= want=
 for a in "$@"; do
-  if [ -n "$want" ]; then table=$a want=; continue; fi
+  case $want in
+    table) table=$a want=; continue ;;
+    mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
+  esac
   case $a in
     --json) json=1 ;;
     --html) html=1 ;;
     --score) score=1 ;;
     --brief) brief=1 ;;
-    --table) want=1 ;;
+    --table) want=table ;;
+    --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
     *) rev=$a ;;
   esac
 done
-[ -z "$want" ] || { echo "seam: --table wants a file" >&2; exit 2; }
+case $want in
+  table) echo "seam: --table wants a file" >&2; exit 2 ;;
+  mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
+esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
 [ -n "$rev" ] || { sed -n '2,8p' "$0" | sed 's/^# //' >&2; exit 2; }
 # base and head: the two trees. An end a range leaves out is HEAD, the way it
@@ -120,6 +130,15 @@ done
 empty() { git hash-object -t tree /dev/null; }
 commit() { git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 || { printf 'seam: %s is not a commit\n' "$1" >&2; exit 2; }; }
 case $rev in
+  '!')      echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
+  '!'*)     # The two ends GitLab diffs, not the target branch as it is now,
+            # which has moved on since. The head comes from the MR's own ref,
+            # which covers forks; fetching it leaves no ref behind.
+            refs=$(glab api "projects/:fullpath/merge_requests/${rev#!}" | jq -er '.diff_refs | select(.) | "\(.base_sha) \(.head_sha)"') ||
+              { printf 'seam: no diff from GitLab for %s\n' "$rev" >&2; exit 1; }
+            base=${refs% *} head=${refs#* }
+            git fetch --quiet --no-tags origin "refs/merge-requests/${rev#!}/head" || exit 1
+            git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --quiet --no-tags origin "$base" || exit 1 ;;
   worktree) base=$(git rev-parse -q --verify HEAD || empty); head=; cd "$(git rev-parse --show-toplevel)" || exit 1 ;;
   *...*)    l=${rev%%...*} r=${rev##*...}
             commit "${l:-HEAD}"; commit "${r:-HEAD}"

@@ -15,6 +15,7 @@ seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam worktree               what is changed against HEAD, staged or not
+seam --mr 1234              a GitLab merge request (or its URL), via glab
 ```
 
 seam works out what a change did to the named things in it and hands that to

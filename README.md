@@ -3,6 +3,13 @@
 A change, read by definition rather than by file.
 
 ```
+brew install booka66/seam/seam
+```
+
+That brings ast-grep and jq with it. Anywhere else, put `bin/` on your PATH
+with `share/` beside it, and have git, ast-grep and jq installed.
+
+```
 seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through

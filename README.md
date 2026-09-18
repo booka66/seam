@@ -91,22 +91,23 @@ statement).
 
 ## Speed
 
-It is shell over `git`, `ast-grep` and `jq`, and at the size of a change anyone
-actually reviews that is not the slow part:
+It is shell over `git`, `ast-grep` and `jq`. A real change of 95 changed
+TypeScript files in a monorepo, 195 definitions, reads in **4.8s**; a synthetic
+one of 6400 definitions, which nobody can review, takes 18s.
 
-| definitions in the change | seam |
-| --- | --- |
-| 200 | 0.25s |
-| 400 | 0.49s |
-| 800 | 1.2s |
-| 1600 | 3.9s |
+Two things cost far more than they look:
 
-Parsing is 0.06s of that; the rest is finding the mentions, which compares every
-changed definition against every other and so grows as the square. At 6400
-definitions it takes a minute, and the honest answer there is that nobody can
-review a change that size anyway. Fixing the shape (one pass over the text
-against an index of names, rather than a pass a pair) would buy far more than
-rewriting it in a faster language, and has not been needed yet.
+- **One huge file.** ast-grep hands back the text of every declaration it
+  matches, so a single 2MB generated registry in a change became 28MB of JSON
+  for a regex to walk, and nine minutes. A file over `SEAM_MAX_BYTES` (256KB)
+  is listed as a plain file instead, the way one seam has no language for is.
+  Nobody reads a file that size by definition anyway.
+- **Comparing every pair.** Finding which definition mentions which used to test
+  every definition against every other, which is the square of the change. It is
+  now one pass over each definition's text against an index of names.
+
+What is left is ast-grep's JSON and the jq pass that flattens it, which is where
+the next win is if one is ever needed.
 
 ## What it wants
 

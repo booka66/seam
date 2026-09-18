@@ -10,7 +10,8 @@
 #
 # <rev> is one commit, base..head (a merge request), base...head (a branch
 # against where it left) or the word worktree (what is changed against HEAD,
-# staged or not, untracked files too).
+# staged or not, untracked files too). An end left out of a range is HEAD, so
+# main.. is this branch and main...  is this branch against where it left.
 #
 # A definition is any self-contained named thing you would want to read a diff
 # of: a function, a class and each of its members, a type, a const. Each one
@@ -99,14 +100,22 @@ for a in "$@"; do
   esac
 done
 [ -n "$rev" ] || { sed -n '2,8p' "$0" | sed 's/^# //' >&2; exit 2; }
-# base and head: the two trees. The worktree has no head commit; its files are
-# read where they are, from the repo root, where the paths a diff names start.
+# base and head: the two trees. An end a range leaves out is HEAD, the way it
+# is for git itself, so main.. is main..HEAD; without that it read as an empty
+# head, which is how the worktree is said, and answered a different question
+# quietly. The worktree has no head commit: its files are read where they are,
+# from the repo root, where the paths a diff names start.
 empty() { git hash-object -t tree /dev/null; }
+commit() { git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 || { printf 'seam: %s is not a commit\n' "$1" >&2; exit 2; }; }
 case $rev in
   worktree) base=$(git rev-parse -q --verify HEAD || empty); head=; cd "$(git rev-parse --show-toplevel)" || exit 1 ;;
-  *...*)    base=$(git merge-base "${rev%%...*}" "${rev##*...}"); head=$(git rev-parse "${rev##*...}") ;;
-  *..*)     base=${rev%%..*}; head=${rev##*..} ;;
-  *)        head=$rev; base=$(git rev-parse -q --verify "$rev^" 2>/dev/null || empty) ;;
+  *...*)    l=${rev%%...*} r=${rev##*...}
+            commit "${l:-HEAD}"; commit "${r:-HEAD}"
+            base=$(git merge-base "${l:-HEAD}" "${r:-HEAD}"); head=$(git rev-parse "${r:-HEAD}") ;;
+  *..*)     l=${rev%%..*} r=${rev##*..}
+            commit "${l:-HEAD}"; commit "${r:-HEAD}"
+            base=${l:-HEAD} head=${r:-HEAD} ;;
+  *)        commit "$rev"; head=$rev; base=$(git rev-parse -q --verify "$rev^" 2>/dev/null || empty) ;;
 esac
 
 # Reading a -U0 or -U999999 diff (share/hunks.awk, and seam --awk hunks for a
@@ -149,9 +158,26 @@ build() {
     done | awk '{ print "?\t" $0 }' >> "$tmp/status"
     git --no-optional-locks diff-index --numstat -M "$base" > "$tmp/numstat"
   fi
-  # What ast-grep can read, by extension; everything else lists as a file.
-  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "D" { print $2 }' "$tmp/status" > "$tmp/new.paths"
-  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "A" && $1 != "?" { print $2 }' "$tmp/status" > "$tmp/old.paths"
+  # What ast-grep can read, by extension; everything else lists as a file. So
+  # does a file too big to be read by definition: ast-grep hands back the text
+  # of every declaration it matches, so one two-megabyte generated registry in
+  # a change turned into twenty-eight megabytes of JSON for a regex to walk,
+  # and nine minutes for a change of two hundred definitions. Nobody reads a
+  # file that size by name anyway. SEAM_MAX_BYTES moves the line.
+  max=${SEAM_MAX_BYTES:-262144}
+  # under <rev>: the paths on stdin whose file at that rev is within the limit,
+  # asked in one git call; without a rev, the ones on disk (the worktree).
+  under() {
+    if [ -n "$1" ]; then
+      while read -r p; do printf '%s:%s %s\n' "$1" "$p" "$p"; done |
+        git cat-file --batch-check='%(objectsize) %(rest)' 2>/dev/null |
+        awk -v max="$max" '$1 ~ /^[0-9]+$/ && $1 + 0 <= max { sub(/^[0-9]+ /, ""); print }'
+    else
+      while read -r p; do [ -f "$p" ] && [ "$(wc -c < "$p")" -le "$max" ] && printf '%s\n' "$p"; done
+    fi
+  }
+  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "D" { print $2 }' "$tmp/status" | under "$head" > "$tmp/new.paths"
+  awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "A" && $1 != "?" { print $2 }' "$tmp/status" | under "$base" > "$tmp/old.paths"
   rules=$(rules)
   # Both trees, extracted once (one git each), parsed once (one ast-grep each,
   # which reads a directory in parallel), then flattened to a row a match. The
@@ -200,6 +226,50 @@ build() {
     }
     '"$hunk_awk"'
     function key(i) { return P[i] SUBSEP PAR[i] SUBSEP NM[i] }
+    # mentions: the names the text of one definition names, in cnt (how many times)
+    # and first (the order it first names them). One pass over the text, so
+    # what a definition uses is a lookup in an index of names rather than a
+    # regex against every other definition.
+    #
+    # What counts as naming something, which is what the regex this replaced
+    # said: not after a dot, since runner.run() is a property of runner and not
+    # the run declared here, but after a spread, since ...opts is a use; and not
+    # before a colon or a question mark, where the name is a key or a typed
+    # property rather than a use. Every other character is a boundary. A name
+    # ending a line and a colon opening the next reads as a key here, where the
+    # regex read it as a use; no code writes that.
+    function mentions(s, cnt, first,   nc, ch, i, nh, hs, h, nseg, sg, j, seg, tok, prev, n) {
+      split("", cnt); split("", first)
+      gsub(/\.\.\./, " ", s)
+      gsub(/[ \t\r\n\v\f]+/, " ", s)
+      gsub(/[^A-Za-z0-9_$.:? ]+/, "\t", s)
+      nc = split(s, ch, / /)
+      prev = ""
+      for (i = 1; i <= nc; i++) {
+        if (ch[i] == "") continue
+        # A chunk opening with : or ? unmakes the name before it, which is then
+        # a key or a typed property. Only whitespace may lie between: in
+        # Opts): string the bracket ends the name and the colon is the return
+        # type, which is why anything else is a hard boundary above.
+        if (ch[i] ~ /^[:?]/ && prev != "") {
+          if (--cnt[prev] <= 0) { delete cnt[prev]; delete first[prev] }
+        }
+        prev = ""
+        nh = split(ch[i], hs, /\t/)
+        for (h = 1; h <= nh; h++) {
+          nseg = split(hs[h], sg, /[:?]+/)
+          for (j = 1; j <= nseg; j++) {
+            seg = sg[j]
+            if (seg == "" || seg !~ /^[A-Za-z0-9_$]/) continue
+            if (j < nseg) continue
+            match(seg, /^[A-Za-z0-9_$]+/); tok = substr(seg, 1, RLENGTH)
+            cnt[tok]++
+            if (!(tok in first)) first[tok] = ++n
+            if (h == nh) prev = tok
+          }
+        }
+      }
+    }
     function emit(r,   i, k) {
       i = rows[r]; k = key(i)
       print P[i], R[i], NM[i], PAR[i], EXP[r], CH[r], S[i], A[i], Z[i], OPEN[r], ADD[r], DEL[r], H[i], \
@@ -274,46 +344,52 @@ build() {
       # to the outer one, and the inner sits under it.
       for (r = 1; r <= m; r++) if (TOP[r]) pairat[P[rows[r]], BARE[rows[r]], (NM[rows[r]] == BARE[rows[r]])] = r
       for (r = 1; r <= m; r++) if (TOP[r] && NM[rows[r]] != BARE[rows[r]] && ((P[rows[r]], BARE[rows[r]], 1) in pairat)) {
-        q = pairat[P[rows[r]], BARE[rows[r]], 1]; nm = BARE[rows[r]]; gsub(/\$/, "\\$", nm)
-        re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
-        tt = T[rows[r]]; if (gsub(re, "&", tt) >= 2) { inner[q] = r; continue }
-        tt = T[rows[q]]; if (gsub(re, "&", tt) >= 2) inner[r] = q
+        q = pairat[P[rows[r]], BARE[rows[r]], 1]; nm = BARE[rows[r]]
+        # A declaration names itself once, so the two name each other only on a
+        # second mention.
+        mentions(T[rows[r]], cnt, first); if (cnt[nm] >= 2) { inner[q] = r; continue }
+        mentions(T[rows[q]], cnt, first); if (cnt[nm] >= 2) inner[r] = q
+      }
+      # The changed definitions indexed by the name they are mentioned as, so
+      # what one uses is a lookup rather than a pass against every other. Each
+      # kind of file keeps to itself, so the kind is part of the key.
+      for (r = 1; r <= m; r++) if (TOP[r]) {
+        nm = BARE[rows[r]]
+        if (nm != "" && nm !~ /[^A-Za-z0-9_$]/) at_name[KIND[P[rows[r]]], nm] = at_name[KIND[P[rows[r]]], nm] " " r
       }
       for (r = 1; r <= m; r++) if (TOP[r]) {
         sortkey[r] = P[rows[r]] sprintf("%08d", A[rows[r]]) S[rows[r]]
+        mentions(T[rows[r]], cnt, first)
         nu = 0
-        for (q = 1; q <= m; q++) {
-          if (q == r || !TOP[q] || KIND[P[rows[q]]] != KIND[P[rows[r]]]) continue
-          if ((q in inner) && inner[q] != r) continue
-          nm = BARE[rows[q]]
-          if (nm == "" || nm ~ /[^A-Za-z0-9_$]/) continue
-          # index() first: the regex is compiled per pair, and nearly every pair misses.
-          pos = index(T[rows[r]], nm)
-          if (pos == 0) continue
-          gsub(/\$/, "\\$", nm)
-          # Not after a dot: runner.run() is a property of runner, not the run
-          # here; a spread (...opts) is a use; a name before a colon is a key
-          # or a typed property, not a use. A declaration mentions its own
-          # name once, so the type and the const of one name use each other
-          # only on a second mention.
-          re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
-          if (T[rows[r]] !~ re) continue
-          if (nm == BARE[rows[r]]) { tt = T[rows[r]]; if (gsub(re, "&", tt) < 2) continue }
-          uses[r, ++nu] = q; usepos[r, nu] = pos; indeg[q]++
+        for (nm in cnt) {
+          if (!((KIND[P[rows[r]]], nm) in at_name)) continue
+          nq = split(at_name[KIND[P[rows[r]]], nm], qs, " ")
+          for (x = 1; x <= nq; x++) {
+            q = qs[x] + 0
+            if (q == r || ((q in inner) && inner[q] != r)) continue
+            # A definition names itself once, in its own declaration, so the
+            # const and the type of one name use each other only on a second.
+            if (nm == BARE[rows[r]] && cnt[nm] < 2) continue
+            uses[r, ++nu] = q; usepos[r, nu] = first[nm]; indeg[q]++
+          }
         }
-        for (x = 1; x <= nu; x++) for (y = x + 1; y <= nu; y++) if (usepos[r, y] < usepos[r, x]) {
-          t = uses[r, x]; uses[r, x] = uses[r, y]; uses[r, y] = t
-          t = usepos[r, x]; usepos[r, x] = usepos[r, y]; usepos[r, y] = t
-        }
+        # In the order they are mentioned; two definitions of one name are named
+        # in the same place, and take the order they are listed in, so the same
+        # change reads the same way every time.
+        for (x = 1; x <= nu; x++) for (y = x + 1; y <= nu; y++)
+          if (usepos[r, y] < usepos[r, x] || (usepos[r, y] == usepos[r, x] && uses[r, y] < uses[r, x])) {
+            t = uses[r, x]; uses[r, x] = uses[r, y]; uses[r, y] = t
+            t = usepos[r, x]; usepos[r, x] = usepos[r, y]; usepos[r, y] = t
+          }
         NU[r] = nu
         for (x = 1; x <= nu; x++) { i = rows[uses[r, x]]; USES[r] = USES[r] (x > 1 ? "|" : "") P[i] "#" NM[i] }
-        # An edge is new when the base side of the user did not mention the
-        # name: an added user, or one that now calls what it did not.
-        k = key(rows[r]); ot_ = (k in old) ? T[old[k]] : ""
+        # An edge is new when the base side of the user did not name it: an
+        # added user, or one that now calls what it did not.
+        k = key(rows[r])
+        if (k in old) mentions(T[old[k]], was, wasfirst); else split("", was)
         for (x = 1; x <= nu; x++) {
-          i = rows[uses[r, x]]; nm = BARE[i]; gsub(/\$/, "\\$", nm)
-          re = "(^|[^A-Za-z0-9_$.]|\\.\\.\\.)" nm "([^A-Za-z0-9_$ \\t:?]|[ \\t]+[^ \\t:?]|[ \\t]*$)"
-          if (!(k in old) || ot_ !~ re) NEWU[r] = NEWU[r] (NEWU[r] != "" ? "|" : "") P[i] "#" NM[i]
+          i = rows[uses[r, x]]
+          if (!(k in old) || !(BARE[i] in was)) NEWU[r] = NEWU[r] (NEWU[r] != "" ? "|" : "") P[i] "#" NM[i]
         }
       }
       # Roots: nothing mentions them. A cycle has none, so whatever a root

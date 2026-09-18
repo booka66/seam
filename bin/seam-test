@@ -64,6 +64,15 @@ expect table/generated-isolated "$(awk -F'\t' '$1 == "gen.generated.ts" { print 
 expect table/file-row "$(awk -F'\t' '$1 == "notes.md" { print $2, $6, $11, $12 }' "$t")" "file added 1 0"
 expect table/unclaimed-row "$(awk -F'\t' '$1 == "lib.ts" && $2 == "file" { print $11, $12 }' "$t")" "1 0"
 
+# --- what a rev means. An end left out of a range is HEAD, as it is for git:
+# without that, `main..` read as an empty head, which is how the worktree is
+# said, and quietly answered a different question.
+expect rev/open-ended "$(seam "$base.." | cmp -s - "$t" && echo same)" "same"
+expect rev/three-dot "$(seam "$base..." | cmp -s - "$t" && echo same)" "same"
+expect rev/one-commit "$(seam "$head" | cmp -s - "$t" && echo same)" "same"
+expect rev/bad-ref "$(seam nope..HEAD 2>&1; echo "rc=$?")" "$(printf 'seam: nope is not a commit\nrc=2')"
+expect rev/bad-single "$(seam nope 2>&1 >/dev/null; echo "rc=$?")" "$(printf 'seam: nope is not a commit\nrc=2')"
+
 # --- the graph
 g=$tmp/graph.json
 seam "$base..$head" --json > "$g"

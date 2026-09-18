@@ -127,6 +127,21 @@ expect html/escapes-close "$(sed -n '/id="seam-data"/p' "$tmp/tag.html" | grep -
 expect html/still-json "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/tag.html" | sed 's|<\\/|</|g' | jq -r '.definitions[] | select(.name == "closes") | .head')" 'const closes = "</script>";'
 git reset -q --hard "$head"
 
+# The page has to draw. A browser is the only thing that can say so, and a
+# thrown error used to leave a blank canvas, so this renders the page headless
+# and counts what came out. Skipped where there is no Chrome.
+chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+[ -x "$chrome" ] || chrome=$(command -v google-chrome-stable || command -v chromium || true)
+if [ -n "$chrome" ] && [ -x "$chrome" ]; then
+  "$chrome" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom "file://$p" > "$tmp/dom.html" 2>/dev/null
+  expect page/draws-nodes "$(grep -o 'class="node' "$tmp/dom.html" | wc -l | tr -d ' ')" "10"
+  expect page/draws-edges "$(grep -o 'class="edge' "$tmp/dom.html" | wc -l | tr -d ' ')" "6"
+  expect page/no-error "$(grep -o '<b>The page could not draw[^<]*' "$tmp/dom.html" | wc -l | tr -d ' ')" "0"
+  expect page/names-drawn "$(grep -o '<text [^>]*>[^<]*</text>' "$tmp/dom.html" | sed 's/<[^>]*>//g' | grep -c 'usePair')" "1"
+  # A box is sized to its name, so nothing in the fixture should be cut short.
+  expect page/names-whole "$(grep -o '<text [^>]*>[^<]*</text>' "$tmp/dom.html" | grep -c '\u2026')" "0"
+fi
+
 # --- the language files
 expect lang/languages "$(seam --languages)" "$(printf 'typescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "22"

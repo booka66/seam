@@ -3,6 +3,9 @@
 # seam <rev> --json       the same as a graph: definitions, edges, boxes
 # seam <rev> --html       that graph in a page you can click through, opened
 # seam <rev> --score      what makes the change hard to read, and how hard
+# seam <rev> --score --brief          the same in one line, for a footer
+# seam <rev> --score --table <file>   from a table already built, without
+#                                     reading the trees again
 # seam --languages        the languages it can read, and by which extensions
 # seam --rules            the ast-grep rules behind that, for a program that
 #                         wants to place something of its own in a declaration
@@ -93,16 +96,21 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score=
+rev= json= html= score= brief= table= want=
 for a in "$@"; do
+  if [ -n "$want" ]; then table=$a want=; continue; fi
   case $a in
     --json) json=1 ;;
     --html) html=1 ;;
     --score) score=1 ;;
+    --brief) brief=1 ;;
+    --table) want=1 ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
     *) rev=$a ;;
   esac
 done
+[ -z "$want" ] || { echo "seam: --table wants a file" >&2; exit 2; }
+[ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
 [ -n "$rev" ] || { sed -n '2,8p' "$0" | sed 's/^# //' >&2; exit 2; }
 # base and head: the two trees. An end a range leaves out is HEAD, the way it
 # is for git itself, so main.. is main..HEAD; without that it read as an empty
@@ -565,7 +573,15 @@ build() {
 }
 
 out=$(mktemp) || exit 1
-build
+# --table: the caller has the table already (otis's picker keeps one for the
+# life of the view), so the trees are not read again.
+if [ -n "$table" ]; then
+  tmp=$(mktemp -d) || exit 1
+  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds"' EXIT
+  cat "$table" > "$out"
+else
+  build
+fi
 if [ -n "$html" ]; then
   # A terminal on the other end has nothing to read a page with, so write it
   # where it can be opened and open it; a pipe or a file gets the page itself.
@@ -580,5 +596,5 @@ if [ -n "$html" ]; then
   else
     page "$out"
   fi
-elif [ -n "$score" ]; then graph "$out" | jq -r -f "$share/score.jq"
+elif [ -n "$score" ]; then graph "$out" | jq -r --arg brief "${brief:-}" -f "$share/score.jq"
 elif [ -n "$json" ]; then graph "$out"; else cat "$out"; fi

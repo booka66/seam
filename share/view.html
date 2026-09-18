@@ -197,11 +197,28 @@
     return n;
   }
   function baseName(p) { return p.split("/").pop(); }
+  // A box is as wide as the name in it: a truncated name is not a name, and
+  // reading them is what the drawing is for.
+  function textW(t) {
+    if (!MEASURE) {
+      MEASURE = document.createElement("canvas").getContext("2d");
+      MEASURE.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    }
+    return MEASURE.measureText(t).width;
+  }
   function label(d) { return d.class ? d.class + "." + d.name : d.name; }
   function cut(t, n) { return t.length > n ? t.slice(0, n - 1) + "…" : t; }
 
   if (!data) { showDrop(); return; }
-  start(data);
+  // A thrown error used to leave an empty canvas and no word about why. Say it
+  // on the page: this file is read by people who cannot open a console.
+  try { start(data); } catch (err) {
+    var box = h("div", "hint");
+    box.style.cssText = "margin:40px auto;max-width:60ch;padding:20px;border:1px solid var(--line);border-radius:10px";
+    box.appendChild(h("b", null, "The page could not draw this graph."));
+    box.appendChild(h("pre", "head", String((err && err.stack) || err)));
+    document.body.appendChild(box);
+  }
 
   function showDrop() {
     document.body.style.overflow = "auto";
@@ -468,17 +485,18 @@
         var gn = s("g", "node " + d.change + (state.sel === d.id ? " sel" : (lit && !near[d.id] ? " fade" : "")));
         gn.setAttribute("transform", "translate(" + p.x + "," + p.y + ")");
         var r = s("rect");
-        r.setAttribute("width", NW); r.setAttribute("height", NH);
+        r.setAttribute("width", p.w); r.setAttribute("height", NH);
         gn.appendChild(r);
+        if (d.root) {
+          var bar = s("rect", "entry");
+          bar.setAttribute("width", 3); bar.setAttribute("height", NH - 8);
+          bar.setAttribute("x", 0); bar.setAttribute("y", 4);
+          gn.appendChild(bar);
+        }
         var t = s("text");
-        t.setAttribute("x", 9); t.setAttribute("y", NH / 2);
-        t.textContent = (GLYPH[d.change] || "·") + " " + cut(label(d), 20);
+        t.setAttribute("x", 11); t.setAttribute("y", NH / 2);
+        t.textContent = (GLYPH[d.change] || "·") + " " + p.label;
         gn.appendChild(t);
-        var tag = s("text", "tag");
-        tag.setAttribute("x", NW - 6); tag.setAttribute("y", NH / 2);
-        tag.setAttribute("text-anchor", "end");
-        tag.textContent = d.root ? "entry" : "";
-        gn.appendChild(tag);
         var title = s("title");
         title.textContent = d.id + "  —  " + (d.head || "");
         gn.appendChild(title);

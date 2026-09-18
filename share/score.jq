@@ -79,7 +79,12 @@ def rate($n; $look; $bad): if $n >= $bad then 2 elif $n >= $look then 1 else 0 e
       0, "nothing outside them can break because of them"]
   ] as $rows
 | ([$rows[] | .[2]] | max) as $worst
-| (
+| (if $brief == "1" then
+    (if $worst == 2 then "hard to review as one change"
+     elif $worst == 1 then "worth reading in an order"
+     else "reads as one thing" end)
+    + ([$rows[] | select(.[2] > 0) | .[0] + " " + (.[1] | split(" ") | .[0])] | if length == 0 then "" else " · " + join(" · ") end)
+  else (
     "seam  " + ($g.rev // "a change") + "  ·  " + (($g.definitions | length) | tostring) + " definitions, "
       + (($E | length) | tostring) + " edges",
     "",
@@ -89,3 +94,4 @@ def rate($n; $look; $bad): if $n >= $bad then 2 elif $n >= $look then 1 else 0 e
             elif $worst == 1 then "reviewable, with the look lines read first"
             else "reads as one thing" end)
   )
+  end)

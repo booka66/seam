@@ -212,9 +212,11 @@ draw_score() {
   colour=0
   [ -t 1 ] && colour=1
   case ${SEAM_COLOR:-} in 1|yes|always) colour=1 ;; 0|no|never) colour=0 ;; esac
-  width=$(tput cols 2>/dev/null || echo 0)
-  [ "${width:-0}" -ge 60 ] 2>/dev/null || width=${COLUMNS:-92}
-  [ "${width:-0}" -ge 60 ] 2>/dev/null || width=92
+  # COLUMNS first: a preview pane is narrower than the terminal it sits in, and
+  # it is the caller who knows that (fzf says so in FZF_PREVIEW_COLUMNS).
+  width=${COLUMNS:-0}
+  [ "${width:-0}" -ge 40 ] 2>/dev/null || width=$(tput cols 2>/dev/null || echo 0)
+  [ "${width:-0}" -ge 40 ] 2>/dev/null || width=92
   [ "$width" -le 110 ] || width=110
   awk -F'\t' -v c="$colour" -v W="$width" '
     function wrap(text, indent,   words, n, i, line) {
@@ -236,7 +238,11 @@ draw_score() {
     $1 == "totals" { printf "  %s%s%s\n\n", D, $2, R; next }
     $1 == "row" {
       rate = $4 + 0
-      printf "  %s%s%s %s%-9s%s %-28s %s%s%s\n", COL[rate], bar, R, B, $2, R, $3, D, fit($5, W - 45), R
+      # A note cut to a stub says nothing: in a narrow pane it goes, and the
+      # line under a flagged row carries the meaning instead.
+      room = W - 45
+      printf "  %s%s%s %s%-9s%s %-28s%s\n", COL[rate], bar, R, B, $2, R, $3,
+        (room >= 24 ? " " D fit($5, room) R : "")
       if (rate > 0 && $6 != "") { wrap($6, "      "); print "" }
       next
     }

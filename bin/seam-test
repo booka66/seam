@@ -102,14 +102,23 @@ expect worktree/untracked "$(wt brand)" "01"
 # --- the score: what makes a change hard to read. Counts, not a judgement, so
 # each line is checked against the fixture rather than against a feeling.
 sc=$tmp/score.txt
-seam "$base..$head" --score > "$sc"
-score() { awk -v k="$1" '$1 == k { $1 = ""; sub(/^ +/, ""); print }' "$sc"; }
+SEAM_COLOR=0 COLUMNS=100 seam "$base..$head" --score > "$sc"
+# The drawn rows: a bar, the name, the count, what it counts.
+score() { sed -E 's/\x1b\[[0-9;]*m//g' "$sc" | awk -v k="$1" '$2 == k { $1 = ""; $2 = ""; sub(/^ +/, ""); print }'; }
 expect score/stories "$(score stories | cut -d' ' -f1-2)" "3 to"
 expect score/knots "$(score knots | cut -d' ' -f1)" "none"
 expect score/chain "$(score chain | cut -d' ' -f1-2)" "3 deep"
 expect score/carry "$(score carry | awk '{ print $1, $3 }')" "1 3"
 expect score/safe "$(score safe | cut -d' ' -f1-3)" "1 of 10"
-expect score/verdict "$(tail -1 "$sc" | sed 's/^ *//')" "reads as one thing"
+expect score/verdict "$(grep -c 'reads as one thing' "$sc")" "1"
+expect score/brief "$(seam "$base..$head" --score --brief)" "reads as one thing"
+expect score/no-colour-when-piped "$(printf '%s' "$(cat "$sc")" | grep -c "$(printf '\033')")" "0"
+# What to do about it shows only under a line that is not ok, and the fixture
+# has none, so no advice is drawn.
+expect score/no-advice "$(grep -c 'Split the branch' "$sc")" "0"
+# From a table already built, the same answer without reading the trees again.
+seam "$base..$head" > "$tmp/score.tsv"
+expect score/from-table "$(seam --table "$tmp/score.tsv" "$base..$head" --score --brief)" "reads as one thing"
 
 # --- the page it ships. The data goes in where the marker is, and a string in
 # the code being read must not be able to close the script tag.

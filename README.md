@@ -205,7 +205,7 @@ the next win is if one is ever needed.
 
 ## What it wants
 
-`git`, [`ast-grep`](https://ast-grep.github.io) (`sg`), `jq`, and a POSIX shell.
+`git`, [`ast-grep`](https://ast-grep.github.io), `jq`, and a POSIX shell.
 
 ```
 bin/seam-test

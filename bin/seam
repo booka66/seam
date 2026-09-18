@@ -42,7 +42,7 @@
 # a renderer reads it: otis's picker walks it as a tree, and a graph drawing
 # is the same data with the arrows kept.
 #
-# What it wants: git, ast-grep (sg) and jq. Add a language by dropping a rule
+# What it wants: git, ast-grep and jq. Add a language by dropping a rule
 # file in ./.seam/languages or ~/.config/seam/languages; a file there replaces
 # the one seam ships under the same name.
 share=$(cd "$(dirname "$0")/../share" && pwd)
@@ -329,12 +329,12 @@ build() {
     if [ ! -s "$tmp/$side.paths" ]; then
       echo '[]'
     elif [ "$side" = new ] && [ -z "$head" ]; then
-      tr '\n' '\0' < "$tmp/new.paths" | xargs -0 sg scan --json=compact --inline-rules "$rules" 2>/dev/null
+      tr '\n' '\0' < "$tmp/new.paths" | xargs -0 ast-grep scan --json=compact --inline-rules "$rules" 2>/dev/null
     else
       mkdir "$tmp/$side"
       rev_=$base; [ "$side" = new ] && rev_=$head
       tr '\n' '\0' < "$tmp/$side.paths" | xargs -0 git archive "$rev_" -- 2>/dev/null | tar -x -C "$tmp/$side" 2>/dev/null
-      (cd "$tmp/$side" && sg scan --json=compact --inline-rules "$rules" . 2>/dev/null)
+      (cd "$tmp/$side" && ast-grep scan --json=compact --inline-rules "$rules" . 2>/dev/null)
     fi |
     jq -r --arg side "$side" -f "$share/decls.jq" >> "$tmp/decls"
   done

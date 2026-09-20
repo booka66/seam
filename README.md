@@ -162,8 +162,9 @@ own business.
 A **sweep** is three files or more whose changed lines are the same text: a
 rename, a lint fix, an import that moved. Their files have no definitions seam
 can read, so one at a time they all fall to the rest; together they are one
-thing to read, and they get a slice. It wants the diff, so a plan built from
-`--table` has one fewer thing to say.
+thing to read, and they get a slice. It reads the diff of the two trees, which
+`--table` does not change, so a plan built from a table already made has it
+too; the worktree, which has no head commit to diff, does not.
 
 ```
   seam  main...
@@ -271,7 +272,10 @@ import sweep is made of: without a provider a hundred files whose whole change
 is an import fall to the rest, in the last commit, while the thing they import
 moved in the first. With one they go with what they name, and `--split` reads
 the sweep as the one thing it is. A provider that fails says nothing; seam
-worked before it existed and works if it breaks. `note` is why it is worth
+worked before it existed and works if it breaks. The two trees are in its
+environment as `SEAM_REV`, `SEAM_BASE` and `SEAM_HEAD` (the last empty for the
+worktree), since what the change did to a *line* is most of what a provider
+wants and the table carries only what it did to a definition. `note` is why it is worth
 asking something that can compile — *this caller no longer compiles* is worth
 more than *this caller exists*.
 

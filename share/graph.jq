@@ -21,6 +21,13 @@ def defid: .[0] + "#" + (if (.[3] // "") == "" then .[2] else .[3] + "." + .[2] 
 | cells as $rows
 | def box($p): {file: $p, kind: (if ($kind[$p] // "") == "" then "source" else $kind[$p] end)};
   ($rows | map(select(.[1] != "file"))) as $defs
+| ([$defs[] | defid] | map({key: ., value: true}) | from_entries) as $isdef
+| ($refs | cells | map(select(length >= 2) | {
+    from: .[0], to: .[1],
+    facet: (if .[2] == "iface" then "iface" else "body" end),
+    note: (if (.[3] // "") == "" then null else .[3] end),
+    via: (.[4] // null)
+  })) as $rs
 | {
   rev: $rev,
   base: (if $base == "" then null else $base end),
@@ -40,6 +47,12 @@ def defid: .[0] + "#" + (if (.[3] // "") == "" then .[2] else .[3] + "." + .[2] 
     root: ((.[18] // "") == "1"),
     box: box(.[0])
   })),
+  # What a provider in references/ said, kept apart from the edges seam found
+  # itself: an end of one may be a file the change has no definitions in, which
+  # is no node in this graph but is still a thing that has to move with what it
+  # names. Every one carries the provider that said it and whatever note it
+  # wrote, which is the whole point of asking something that can compile.
+  references: $rs,
   edges: [ $defs[] | . as $r
     | (if ($r[17] // "") == "" then [] else ($r[17] | split("|")) end)[]
     | . as $to
@@ -47,7 +60,10 @@ def defid: .[0] + "#" + (if (.[3] // "") == "" then .[2] else .[3] + "." + .[2] 
     | {from: ($r | defid), to: $to,
        facet: (if (($r[12] // "") | mentions($n)) then "iface" else "body" end),
        new: ((if ($r[19] // "") == "" then [] else ($r[19] | split("|")) end) | index($to) != null)}
-  ],
+  ]
+  # A reference with a definition at both ends is an edge seam should have
+  # had, so it joins the ones it found, with what said it.
+  + ($rs | map(select($isdef[.from] and $isdef[.to] and .from != .to) | . + {new: false})),
   files: ($rows | map(select(.[1] == "file") | {
     path: .[0], change: .[5], added: (.[10] | num), removed: (.[11] | num), box: box(.[0])
   }))

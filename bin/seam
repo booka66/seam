@@ -13,6 +13,10 @@
 # seam <rev> --split --first <glob>   those paths in a slice before every
 #                                     other, for what the code waits on and
 #                                     seam has no language to see
+# seam <rev> --split --branch <n> --check '<cmd>'
+#                                     run <cmd> on every commit as it is made,
+#                                     in a worktree of its own, and write the
+#                                     branch only if every one of them passes
 # seam --languages        the languages it can read, and by which extensions
 # seam --rules            the ast-grep rules behind that, for a program that
 #                         wants to place something of its own in a declaration
@@ -116,12 +120,13 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score= brief= table= split= branch= firstglobs= want=
+rev= json= html= score= brief= table= split= branch= firstglobs= check= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
     branch) branch=$a split=1 want=; continue ;;
     first) firstglobs="$firstglobs $a" want=; continue ;;
+    check) check=$a split=1 want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
@@ -132,6 +137,7 @@ for a in "$@"; do
     --table) want=table ;;
     --split) split=1 ;;
     --first) want=first ;;
+    --check) want=check ;;
     --branch) want=branch ;;
     --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
@@ -142,6 +148,7 @@ case $want in
   table) echo "seam: --table wants a file" >&2; exit 2 ;;
   branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
   first) echo "seam: --first wants a path pattern" >&2; exit 2 ;;
+  check) echo "seam: --check wants a command" >&2; exit 2 ;;
   mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
@@ -188,14 +195,42 @@ esac
 # one side sits on the other.
 hunk_awk=$(cat "$share/hunks.awk")
 
+# References from outside what seam can see, which is the thing it most needs
+# and least can do: an edge here is a name found inside a changed definition,
+# so an import, a route table, a build graph and a compiler are all invisible
+# to it. A provider is a command in references/, found the way the language
+# files are, reading the table on stdin and writing `from⇥to⇥facet⇥note` rows.
+# An end is a definition (path#name, or path#Class.member) or a plain path,
+# for a file the change has no definitions in — which is what an import sweep
+# is made of, and what seam otherwise has nothing to say about.
+refs() {
+  : > "$1.refs"
+  for d in ./.seam/references "${XDG_CONFIG_HOME:-$HOME/.config}/seam/references" "$share/references"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+      [ -x "$f" ] || continue
+      n=${f##*/}
+      case " $seenrefs " in *" $n "*) continue ;; esac
+      seenrefs="$seenrefs $n"
+      # A provider that fails says nothing rather than stopping the change
+      # being read: seam worked before it existed and works if it breaks.
+      "$f" < "$1" 2>/dev/null |
+        awk -F'\t' -v via="$n" 'NF >= 2 && $1 != "" && $2 != "" {
+          print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
+        }' >> "$1.refs"
+    done
+  done
+}
+
 # --json: the table as the graph, with the edges kept and each definition's box
 # named (share/graph.jq). The kinds are asked for again here rather than kept
 # from the build: it is one pass over the paths, and the table is the thing
 # every other reader wants.
 graph() {
   cut -f1 "$1" | sort -u | $kinds > "$1.kinds"
+  refs "$1"
   jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
-    --rawfile kinds "$1.kinds" -f "$share/graph.jq" < "$1"
+    --rawfile kinds "$1.kinds" --rawfile refs "$1.refs" -f "$share/graph.jq" < "$1"
 }
 
 # diffs: each definition's own patch, for a renderer that shows one. The whole
@@ -401,6 +436,37 @@ hazards() {
 # a path pattern a line in .seam/first, then this user's, the way the language
 # files are found, and --first <pattern> on top. Matched against the files
 # seam read no definitions from, which are the only ones that can be lifted.
+# A sweep: the same edit in file after file. A rename, a lint fix, an import
+# that moved — the files have no definitions seam can read, since only their
+# import lines or a call inside nothing changed, and one at a time they all
+# fall to the rest. Their changed lines are the same text, so that is what
+# groups them: three files or more with one edit between them are one thing to
+# read, and reading it once is reading all of it.
+#
+# It wants the diff, which the table alone does not carry, so a plan built
+# from --table has no sweep in it. Nothing is wrong with such a plan; it has
+# one fewer thing to say.
+sweeps() {
+  if [ -z "$head" ] || ! [ -s "$out" ]; then echo '[]'; return; fi
+  awk -F'\t' '$2 == "file" { print $1 }' "$out" > "$tmp/nodefs"
+  if [ ! -s "$tmp/nodefs" ]; then echo '[]'; return; fi
+  tr '\n' '\0' < "$tmp/nodefs" | xargs -0 git diff -U0 --no-renames "$base" "$head" -- 2>/dev/null |
+    awk '
+      /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+      /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+      /^[-+]/ {
+        if ($0 ~ /^(\+\+\+|---)/) next
+        t = substr($0, 2); sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+        sig[f] = sig[f] "\001" substr($0, 1, 1) t
+      }
+      END { for (f in sig) print sig[f] "\t" f }
+    ' | LC_ALL=C sort |
+    awk -F'\t' '
+      { if ($1 == prev) { n++; g = g "\t" $2 } else { if (n >= 3) print g; prev = $1; n = 1; g = $2 } }
+      END { if (n >= 3) print g }
+    ' | jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))'
+}
+
 plan() {
   globs=$firstglobs
   for d in ./.seam "${XDG_CONFIG_HOME:-$HOME/.config}/seam"; do
@@ -422,7 +488,9 @@ plan() {
       done ) >> "$tmp/first.paths"
   fi
   jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
-  jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" -f "$share/split.jq" < "$tmp/graph.json"
+  sweeps > "$tmp/sweeps.json"
+  jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" \
+    --argjson sweeps "$(cat "$tmp/sweeps.json")" -f "$share/split.jq" < "$tmp/graph.json"
 }
 
 # --branch: the slices as commits, in the order the plan has them, on a new
@@ -517,7 +585,41 @@ stack() {
         "", "Slice \($k) of \($n), cut by seam --split.",
         (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end)' "$tmp/plan.json" |
       git commit-tree "$tree" ${parent:+-p "$parent"}) || exit 1
-    printf '  %s  %s  %s\n' "$k" "$(git rev-parse --short "$commit")" "$(git log -1 --format=%s "$commit")"
+    short=$(git rev-parse --short "$commit")
+    subject=$(git log -1 --format=%s "$commit")
+    # Every commit stood up, or the branch is not written. Only the last one
+    # was ever checked, against the head tree, so a stack whose middle did not
+    # build looked exactly like one that did. The command runs in a worktree of
+    # that commit alone, so it sees the tree as a reader of that commit would
+    # and the worktree you are in is not touched; what it needs to run there —
+    # a link to node_modules, a warm cache — is its own business, and it is
+    # told which slice it is on.
+    if [ -n "$check" ]; then
+      printf '  %s  %s  %s ... ' "$k" "$short" "$subject"
+      rm -rf "$tmp/wt"
+      if ! git worktree add --detach -q "$tmp/wt" "$commit" 2>"$tmp/check.out"; then
+        echo; echo "seam: could not make a worktree to check slice $k in:" >&2
+        sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
+      fi
+      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit eval "$check" ) > "$tmp/check.out" 2>&1
+      ok=$?
+      git worktree remove --force "$tmp/wt" 2>/dev/null
+      if [ "$ok" -ne 0 ]; then
+        echo "no"
+        printf 'seam: slice %s of %s does not pass the check, so %s is not written.\n' "$k" "$n" "$branch" >&2
+        if [ -s "$tmp/check.out" ]; then
+          printf 'seam: the last twenty lines of it:\n' >&2
+          tail -20 "$tmp/check.out" | sed 's/^/seam:   /' >&2
+        else
+          printf 'seam: it said nothing, and exited %s.\n' "$ok" >&2
+        fi
+        printf 'seam: that slice needs what a later one has. Put it with the slice that completes it, or say what it waits on in .seam/first.\n' >&2
+        exit 1
+      fi
+      echo "ok"
+    else
+      printf '  %s  %s  %s\n' "$k" "$short" "$subject"
+    fi
     parent=$commit
     k=$((k + 1))
   done
@@ -562,7 +664,7 @@ page() {
 # going on.
 build() {
   tmp=$(mktemp -d) || exit 1
-  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds"' EXIT
+  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds" "$out.refs"' EXIT
   if [ -n "$head" ]; then
     git diff --name-status --no-renames "$base" "$head" > "$tmp/status"
     git diff --numstat -M "$base" "$head" > "$tmp/numstat"
@@ -963,7 +1065,7 @@ out=$(mktemp) || exit 1
 # life of the view), so the trees are not read again.
 if [ -n "$table" ]; then
   tmp=$(mktemp -d) || exit 1
-  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds"' EXIT
+  trap 'rm -rf "$tmp" "$out" "$out.new" "$out.flags" "$out.kinds" "$out.refs"' EXIT
   cat "$table" > "$out"
 else
   build

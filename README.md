@@ -151,6 +151,20 @@ they sit at the top of `share/score.jq` to be argued with.
 stories there are but which definition and which file goes in which one, and
 `--branch <name>` lays them down as commits.
 
+`--check '<cmd>'` runs a command on every commit as it is made, in a worktree
+of that commit alone, and writes the branch only if every one of them passes.
+Without it only the last commit is checked, against the head tree, so a stack
+whose middle did not build looked exactly like one that did. The command is
+told which slice it is on (`SEAM_SLICE`, `SEAM_SLICES`, `SEAM_COMMIT`), and
+what it needs to run there — a link to `node_modules`, a warm cache — is its
+own business.
+
+A **sweep** is three files or more whose changed lines are the same text: a
+rename, a lint fix, an import that moved. Their files have no definitions seam
+can read, so one at a time they all fall to the rest; together they are one
+thing to read, and they get a slice. It wants the diff, so a plan built from
+`--table` has one fewer thing to say.
+
 ```
   seam  main...
   60 definitions · 93 edges · 92 files → 8 slices
@@ -247,7 +261,21 @@ prisma/*
 *.sql
 ```
 
-**`references/<name>`** — not yet. Inside the change seam finds edges itself. The
+**`references/<name>`** — implemented. A command reading the definition table
+on stdin and writing `from⇥to⇥facet⇥note` rows. Inside the change seam finds
+edges itself; the ones that matter most come from outside it and from things
+seam should never know about — a compiler, an HTTP route table, a build graph,
+a test name. An end is a definition (`path#name`, `path#Class.member`) or a
+plain path, for a file the change has no definitions in. That last is what an
+import sweep is made of: without a provider a hundred files whose whole change
+is an import fall to the rest, in the last commit, while the thing they import
+moved in the first. With one they go with what they name, and `--split` reads
+the sweep as the one thing it is. A provider that fails says nothing; seam
+worked before it existed and works if it breaks. `note` is why it is worth
+asking something that can compile — *this caller no longer compiles* is worth
+more than *this caller exists*.
+
+ Inside the change seam finds edges itself. The
 references that matter most come from outside it and from things seam should
 never know about: a compiler, an HTTP route table, a build graph, a test name.
 Those belong to whoever has the repo. The contract will be a command reading the

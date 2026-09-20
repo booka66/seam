@@ -240,6 +240,60 @@ expect split/branch-exists "$(seam "$spbase..$sphead" --split --branch cut 2>&1;
 expect split/branch-no-worktree "$(seam worktree --branch x 2>&1; echo "rc=$?")" "$(printf 'seam: --branch wants two commits, not the worktree\nrc=2')"
 cd "$tmp" || exit 1
 
+# --- references from outside what seam can see. An edge here is a name inside
+# a changed definition, so an import is invisible to it: a type that moves
+# package leaves every importer in the last slice and the move in the first.
+# A provider in references/ says what seam cannot, and the sweep reads as the
+# one thing it is.
+rf=$tmp/rf
+mkdir "$rf" && cd "$rf" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export const Mode = { A: "a" };\n' > mode.ts
+printf 'import { Mode } from "./mode";\nexport function pick(): string { return Mode.A; }\n' > use.ts
+printf 'import { Mode } from "./mode";\nexport function one() { return Mode.A; }\n' > one.ts
+git add -A && git commit -qm base && rfbase=$(git rev-parse HEAD)
+rm mode.ts
+printf 'export const Mode = { A: "a", B: "b" };\n' > gen.ts
+printf 'import { Mode } from "./gen";\nexport function pick(n: number): string { return n ? Mode.B : Mode.A; }\n' > use.ts
+printf 'import { Mode } from "./gen";\nexport function one() { return Mode.A; }\n' > one.ts
+git add -A && git commit -qm head && rfhead=$(git rev-parse HEAD)
+# Without one, the importer has nothing to place it by and falls to the rest,
+# and the order does not stand up.
+expect refs/without "$(seam "$rfbase..$rfhead" --split --json | jq -r '.slices[-1].files[].path')" "one.ts"
+expect refs/without-refuses "$(seam "$rfbase..$rfhead" --split --branch a 2>&1 | grep -c 'does not stand up')" "1"
+mkdir -p .seam/references
+printf '#!/bin/sh\nprintf "one.ts\\tgen.ts#Mode\\tiface\\timports it\\n"\n' > .seam/references/toy
+chmod +x .seam/references/toy
+expect refs/in-the-graph "$(seam "$rfbase..$rfhead" --json | jq -r '.references[] | "\(.from) \(.to) \(.facet) \(.note) \(.via)"')" "one.ts gen.ts#Mode iface imports it toy"
+# The importer now goes with what it imports, and the order stands up.
+expect refs/places-the-file "$(seam "$rfbase..$rfhead" --split --json | jq -r '[.slices[] | select(.kind != "rest") | .files[].path] | index("one.ts") != null')" "true"
+expect refs/no-longer-refuses "$(seam "$rfbase..$rfhead" --split --branch b 2>&1 | grep -c 'does not stand up')" "0"
+# A provider that fails says nothing rather than stopping the read.
+printf '#!/bin/sh\nexit 3\n' > .seam/references/broken; chmod +x .seam/references/broken
+expect refs/a-broken-one-is-quiet "$(seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "1"
+rm -rf .seam
+cd "$tmp" || exit 1
+
+# --- a sweep: the same edit in file after file, which is one thing to read.
+sw=$tmp/sw
+mkdir "$sw" && cd "$sw" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export const Tool = { go: 1 };\nexport function drive(): number { return Tool.go; }\n' > core.ts
+for f in a b c d; do printf 'import { old } from "./old";\nexport const %s = old;\n' "$f" > "$f.ts"; done
+git add -A && git commit -qm base && swbase=$(git rev-parse HEAD)
+printf 'export const Tool = { go: 2 };\nexport function drive(n: number): number { return Tool.go + n; }\n' > core.ts
+for f in a b c d; do printf 'import { old } from "./new";\nexport const %s = old;\n' "$f" > "$f.ts"; done
+git add -A && git commit -qm head && swhead=$(git rev-parse HEAD)
+expect sweep/found "$(seam "$swbase..$swhead" --split --json | jq -r '[.slices[] | select(.kind == "sweep")] | length')" "1"
+expect sweep/named "$(seam "$swbase..$swhead" --split --json | jq -r '.slices[] | select(.kind == "sweep") | .name')" "the same edit in 4 files"
+expect sweep/takes-the-files "$(seam "$swbase..$swhead" --split --json | jq -r '.slices[] | select(.kind == "sweep") | .files | length')" "4"
+# Two of a kind is not a sweep; it takes three to be a pattern.
+printf 'import { old } from "./other";\nexport const a = old;\n' > a.ts
+printf 'import { old } from "./other";\nexport const b = old;\n' > b.ts
+git add -A && git commit -qm two && swtwo=$(git rev-parse HEAD)
+expect sweep/two-is-not-one "$(seam "$swhead..$swtwo" --split --json | jq -r '[.slices[] | select(.kind == "sweep")] | length')" "0"
+cd "$tmp" || exit 1
+
 # --- an order that does not stand up. A type moves out of one file and into
 # another, and every file that imports it is updated: seam has no edge for an
 # import, so the slice that takes the type away lands before the slices still
@@ -317,6 +371,21 @@ sed 's/  return o.b + n;/  return o.d + n;/' big.ts > big.new && mv big.new big.
 printf 'export type Thin = { z: number; y: number; x: number };\nexport function thin(o: Thin): number { return o.x; }\n' > tiny.ts
 git add -A && git commit -qm two && smtwo=$(git rev-parse HEAD)
 expect split/small-kept-when-whole "$(seam "$smhead..$smtwo" --split --json | jq -r '[.slices[] | select(.kind == "story")] | length')" "2"
+
+# --- every commit stood up, or the branch is not written. Only the last was
+# ever checked against the head tree, so a stack whose middle did not build
+# looked exactly like one that did.
+expect split/check-passes "$(seam "$smhead..$smtwo" --split --branch ck1 --check 'test -f big.ts' >/dev/null 2>&1; echo "rc=$?")" "rc=0"
+expect split/check-wrote-it "$(git show-ref --verify -q refs/heads/ck1 && echo yes || echo no)" "yes"
+expect split/check-says-ok "$(seam "$smhead..$smtwo" --split --branch ck2 --check 'true' 2>&1 | grep -c '\.\.\. ok')" "2"
+ckout=$(seam "$smhead..$smtwo" --split --branch ck3 --check 'grep -q nothinghere tiny.ts' 2>&1; echo "rc=$?")
+expect split/check-refuses "$(printf '%s' "$ckout" | grep -c 'does not pass the check')" "1"
+expect split/check-rc "$(printf '%s' "$ckout" | tail -1)" "rc=1"
+expect split/check-no-branch "$(git show-ref --verify -q refs/heads/ck3 && echo yes || echo no)" "no"
+# The check sees the commit it is on, and nothing of the worktree it was run from.
+expect split/check-sees-the-commit "$(seam "$smhead..$smtwo" --split --branch ck4 --check 'test "$SEAM_SLICE" -le "$SEAM_SLICES" && git rev-parse HEAD > /dev/null' >/dev/null 2>&1; echo "rc=$?")" "rc=0"
+expect split/check-wants-a-command "$(seam "$smhead..$smtwo" --split --check 2>&1; echo "rc=$?")" "$(printf 'seam: --check wants a command\nrc=2')"
+
 cd "$tmp" || exit 1
 
 expect split/first-wants-a-pattern "$(seam "$fsbase..$fshead" --split --first 2>&1; echo "rc=$?")" "$(printf 'seam: --first wants a path pattern\nrc=2')"

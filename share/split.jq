@@ -144,15 +144,39 @@ def tested:
    | to_entries | map(.value + {n: (.key + 1), paths: (.value.definitions | map($byid[.].path) | unique)})) as $slices
 | (reduce $slices[] as $s ({}; reduce $s.definitions[] as $d (.; .[$d] = $s.n))) as $slot
 | (reduce $slices[] as $s ({}; reduce $s.paths[] as $p (.; .[$p] += [$s.n]))) as $owners
+# What a file needs, from the providers in references/: the slices of the
+# definitions it names. A file with no definitions of its own had nothing to
+# place it by and fell to the rest, which is where an import sweep went — a
+# hundred files whose whole change is the import of something that moved, in
+# the last commit, while the move is in the first. It goes with the last slice
+# it needs, so everything it names is there when it lands.
+# A sweep, from seam: three files or more whose changed lines are the same
+# text, which is a rename or an import that moved and is one thing to read.
+# It goes after the stories and before the rest, and only the files still
+# unplaced join it — one that a reference has already put with what it needs
+# stays there, since a build cares and a tidy commit does not.
+| (($ARGS.named.sweeps // []) | map(map(select(($owners[.] // []) | length == 0)))
+   | map(select(length >= 3))) as $sweepgroups
+| (reduce (($g.references // [])[]) as $r ({};
+     if $slot[$r.to] then .[$r.from] += [$slot[$r.to]] else . end)) as $needs
 | (($g.definitions | map(.path)) + ($g.files | map(.path)) | unique) as $paths
 # Every file: the slice it goes to and why, or the rest.
-| (($slices | length) + 1) as $restn
+| ($slices | length) as $nstories
+| ($sweepgroups | map(map(select(($needs[.] // []) | length == 0)))
+   | map(select(length >= 3))) as $sweeps
+| (reduce ($sweeps | to_entries)[] as $e ({};
+     reduce $e.value[] as $p (.; .[$p] = ($nstories + 1 + $e.key)))) as $sweepslot
+| ($nstories + ($sweeps | length) + 1) as $restn
 | ([$paths[] | . as $p
     | if $owners[$p] then {path: $p, n: $owners[$p][0], shared: $owners[$p][1:], via: null}
-      else (($p | tested) as $t
-        | if $t != null and $t != $p and (($owners[$t] // []) | length) == 1
-          then {path: $p, n: $owners[$t][0], shared: [], via: $t}
-          else {path: $p, n: $restn, shared: [], via: null} end)
+      else (($needs[$p] // []) | max) as $needed
+        | if $needed != null then {path: $p, n: $needed, shared: [], via: null, needs: true}
+          elif $sweepslot[$p] then {path: $p, n: $sweepslot[$p], shared: [], via: null}
+          else (($p | tested) as $t
+            | if $t != null and $t != $p and (($owners[$t] // []) | length) == 1
+              then {path: $p, n: $owners[$t][0], shared: [], via: $t}
+              else {path: $p, n: $restn, shared: [], via: null} end)
+          end
       end]) as $placed
 | ($placed | map({key: .path, value: .}) | from_entries) as $where
 # Lines, counted where they go: a whole file with its slice, a shared file's
@@ -165,6 +189,12 @@ def tested:
      | {n: $s.n, kind: $s.kind, name: $s.roots[0], roots: $s.roots, definitions: $s.definitions,
         files: [$placed[] | select(.n == $s.n) | {path, shared, via}],
         lines: ($size[$s.n | tostring] // 0)}]
+   + [$sweeps | to_entries[] | . as $e | ($nstories + 1 + $e.key) as $sn
+      | {n: $sn, kind: "sweep",
+         name: "the same edit in " + ($e.value | length | tostring) + " files",
+         roots: [], definitions: [],
+         files: [$placed[] | select(.n == $sn) | {path, shared, via}],
+         lines: ($size[$sn | tostring] // 0)}]
    + ([$placed[] | select(.n == $restn)] as $rest
       | if ($rest | length) == 0 then [] else
         [{n: $restn, kind: "rest", name: ($rest | map(.path) | byfiles), roots: [],

@@ -164,8 +164,8 @@ nobody had before — a proved one.
 Without it only the last commit is checked, against the head tree, so a stack
 whose middle did not build looked exactly like one that did. The command is
 told which slice it is on (`SEAM_SLICE`, `SEAM_SLICES`, `SEAM_COMMIT`), and
-where the two ends and the original worktree are (`SEAM_BASE`, `SEAM_HEAD`,
-`SEAM_ROOT`). One worktree serves the whole stack and moves from commit to
+where the two ends, the original worktree and the table this plan was made
+from are (`SEAM_BASE`, `SEAM_HEAD`, `SEAM_ROOT`, `SEAM_TABLE`). One worktree serves the whole stack and moves from commit to
 commit, so an install done for the first slice is still there for the second;
 what a check needs before it can run is its own business. A check that would
 rather not stand in a worktree at all — asking a language server what the tree

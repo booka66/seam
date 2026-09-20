@@ -633,7 +633,7 @@ stack() {
         echo; echo "seam: could not move the check's worktree to slice $k:" >&2
         sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
       fi
-      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit SEAM_ROOT=$seamroot SEAM_BASE=$base SEAM_HEAD=$head eval "$check" ) > "$tmp/check.out" 2>&1
+      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit SEAM_ROOT=$seamroot SEAM_BASE=$base SEAM_HEAD=$head SEAM_TABLE=$out eval "$check" ) > "$tmp/check.out" 2>&1
       ok=$?
       if [ "$ok" -ne 0 ]; then
         echo "no"

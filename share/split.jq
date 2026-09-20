@@ -53,6 +53,8 @@ def byfiles:
   | if ($n | length) == 0 then "nothing"
     elif ($n | length) <= 2 then ($n | join(" and "))
     else $n[0] + " and " + (($n | length) - 1 | tostring) + " more" end;
+# The directory a path sits in, and whether one path sits under another's.
+def dir: if test("/") then sub("/[^/]*$"; "") else "" end;
 def canon: if .class == null then .id else .path + "#" + .class end;
 def lines: ((.added // 0) + (.removed // 0));
 # Connected pieces of $nodes under $edges ([from, to] pairs): each node starts
@@ -157,6 +159,18 @@ def tested:
 # stays there, since a build cares and a tidy commit does not.
 | (($ARGS.named.sweeps // []) | map(map(select(($owners[.] // []) | length == 0)))
    | map(select(length >= 3))) as $sweepgroups
+# A file the change has no definitions in, sitting in a directory whose
+# definitions do belong somewhere: it goes with them. A BUILD file, a
+# package.json, a tsconfig describes the package it sits in, and the package's
+# code is right there under it — so putting it in the rest, last, is a commit
+# that adds a dependency after the code that needs it. Bazel will not build
+# what is between, and a typechecker resolving through node_modules cannot see
+# why. Its own directory only, never further up, or a file at the root would
+# claim the whole change.
+#
+# The earliest of them, when the code below it is spread across several: a
+# dependency declared before it is used builds, and one declared after does
+# not.
 | (reduce (($g.references // [])[]) as $r ({};
      if $slot[$r.to] then .[$r.from] += [$slot[$r.to]] else . end)) as $needs
 | (($g.definitions | map(.path)) + ($g.files | map(.path)) | unique) as $paths
@@ -175,7 +189,13 @@ def tested:
           else (($p | tested) as $t
             | if $t != null and $t != $p and (($owners[$t] // []) | length) == 1
               then {path: $p, n: $owners[$t][0], shared: [], via: $t}
-              else {path: $p, n: $restn, shared: [], via: null} end)
+              else (($p | dir)) as $d
+                | (if $d == "" then null
+                   else ([$owners | to_entries[] | select(.key | startswith($d + "/")) | .value[]] | min)
+                   end) as $under
+                | if $under != null then {path: $p, n: $under, shared: [], via: null}
+                  else {path: $p, n: $restn, shared: [], via: null} end
+              end)
           end
       end]) as $placed
 | ($placed | map({key: .path, value: .}) | from_entries) as $where

@@ -172,6 +172,16 @@ rather not stand in a worktree at all — asking a language server what the tree
 at that commit would say, from where the dependencies already are — has
 `SEAM_ROOT` and `SEAM_COMMIT` and needs nothing else.
 
+A file the change has no definitions in goes with the package it sits over: a
+BUILD file, a `package.json`, a `tsconfig` describes the code in its own
+directory, and the code is right there under it. Its own directory only, or a
+file at the root would claim the whole change — and the earliest slice under
+it, since a dependency declared before it is used builds and one declared
+after does not. Putting such a file last, which is what the rest means, is a
+commit that adds a dependency after the code that needs it: a build graph will
+not build what is between, and a typechecker resolving through `node_modules`
+cannot see why.
+
 A **sweep** is three files or more whose changed lines are the same text: a
 rename, a lint fix, an import that moved. Their files have no definitions seam
 can read, so one at a time they all fall to the rest; together they are one

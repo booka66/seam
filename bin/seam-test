@@ -304,6 +304,34 @@ git add -A && git commit -qm bulk && trbulk=$(git rev-parse HEAD)
 expect rest/big-kept "$(seam "$trhead..$trbulk" --split --json | jq -r '[.slices[] | select(.kind == "rest")] | length')" "1"
 cd "$tmp" || exit 1
 
+# --- a file with no definitions goes with the package it describes. A BUILD
+# file, a package.json, a tsconfig sits over the code it is about, and putting
+# it last is a commit that declares a dependency after the code that needs it:
+# what is between does not build, and a typechecker resolving through
+# node_modules cannot see why.
+bz=$tmp/bz
+mkdir -p "$bz/pkg/src" "$bz/other/src" && cd "$bz" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'deps = ["//other:lib"]\n' > pkg/BUILD.bazel
+printf 'export type Tee = { a: number };\n' > pkg/src/types.ts
+printf 'import { Tee } from "./types";\nexport function one(o: Tee): number { return o.a; }\n' > pkg/src/one.ts
+printf 'export type Eff = { z: number };\n' > other/src/types.ts
+printf 'import { Eff } from "./types";\nexport function far(o: Eff): number { return o.z; }\n' > other/src/far.ts
+git add -A && git commit -qm base && bzbase=$(git rev-parse HEAD)
+printf 'deps = ["//other:lib", "//new:lib"]\n' > pkg/BUILD.bazel
+printf 'export type Tee = { a: number; b: number };\n' > pkg/src/types.ts
+printf 'import { Tee } from "./types";\nexport function one(o: Tee, n: number): number { return o.a + o.b + n; }\n' > pkg/src/one.ts
+printf 'export type Eff = { z: number; y: number };\n' > other/src/types.ts
+printf 'import { Eff } from "./types";\nexport function far(o: Eff, n: number): number { return o.z + o.y + n; }\n' > other/src/far.ts
+git add -A && git commit -qm head && bzhead=$(git rev-parse HEAD)
+expect package-file/with-its-package "$(seam "$bzbase..$bzhead" --split --json | jq -r '.slices[] | select([.files[].path] | index("pkg/BUILD.bazel")) | [.files[].path] | sort | join(",")')" "pkg/BUILD.bazel,pkg/src/one.ts,pkg/src/types.ts"
+expect package-file/not-the-rest "$(seam "$bzbase..$bzhead" --split --json | jq -r '[.slices[] | select(.kind == "rest")] | length')" "0"
+# Its own directory only: a file at the root describes nothing in particular.
+printf 'root\n' > README.md
+git add -A && git commit -qm root && bzroot=$(git rev-parse HEAD)
+expect package-file/root-stays-in-the-rest "$(seam "$bzhead..$bzroot" --split --json | jq -r '.slices[-1] | .kind')" "rest"
+cd "$tmp" || exit 1
+
 # --- a sweep: the same edit in file after file, which is one thing to read.
 sw=$tmp/sw
 mkdir "$sw" && cd "$sw" || exit 1

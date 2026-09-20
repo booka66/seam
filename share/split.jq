@@ -150,6 +150,34 @@ def tested:
      | {path: .path, rest: .n,
         definitions: ([$g.definitions[] | select(.path == $w.path)
           | {key: .id, value: ($slot[$canon[.id]] // $w.n)}] | from_entries)}]) as $shared
+# What the code waits on, which seam cannot see: it has no language for a
+# migration or a schema, so it has no edge from the code to them and puts them
+# last, where nothing in the graph reaches. It does not guess which way round
+# that is — a migration wants to go first and a test file wants to go last and
+# both are unreadable to seam. What the repo says goes first (--first, or a
+# pattern a line in .seam/first) is lifted into a slice before slice one.
+# Only a file seam read no definitions from can be lifted, so no definition is
+# ever taken out of the story it belongs to.
+| (($ARGS.named.first // []) | map({key: ., value: true}) | from_entries) as $pull
+| ([$g.files[] | select($pull[.path])]) as $lifted
+| (if ($lifted | length) == 0 then {slices: $slices, shared: $shared} else
+     (reduce $lifted[] as $f ({}; .[$where[$f.path].n | tostring] += ($f | lines))) as $minus
+     | ([{old: 0, kind: "first", name: "what the code waits on", roots: [], definitions: [],
+          files: [$slices[] | .files[] | select($pull[.path])],
+          lines: ([$lifted[] | lines] | add // 0)}]
+        + [$slices[] | . as $s
+           | {old: $s.n, kind: $s.kind, name: $s.name, roots: $s.roots, definitions: $s.definitions,
+              files: [$s.files[] | select($pull[.path] | not)],
+              lines: ($s.lines - ($minus[$s.n | tostring] // 0))}]
+        | map(select((.definitions | length) > 0 or (.files | length) > 0))) as $kept
+     | ($kept | to_entries | map({key: (.value.old | tostring), value: (.key + 1)}) | from_entries) as $renum
+     | {slices: [$kept | to_entries[] | .value + {n: (.key + 1)} | del(.old)
+                 | .files |= map(.shared |= map($renum[. | tostring]))],
+        shared: [$shared[] | .rest = $renum[.rest | tostring]
+                 | .definitions |= with_entries(.value = $renum[.value | tostring])]}
+   end) as $plan
+| ($plan.slices) as $slices
+| ($plan.shared) as $shared
 | if $fmt == "json" then
     {rev: $g.rev, base: $g.base, head: $g.head, slices: $slices, shared: $shared}
   else

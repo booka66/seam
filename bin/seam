@@ -10,6 +10,9 @@
 #                         which file goes where
 # seam <rev> --split --branch <name>  those slices as commits, in that order,
 #                                     on a new branch from the base
+# seam <rev> --split --first <glob>   those paths in a slice before every
+#                                     other, for what the code waits on and
+#                                     seam has no language to see
 # seam --languages        the languages it can read, and by which extensions
 # seam --rules            the ast-grep rules behind that, for a program that
 #                         wants to place something of its own in a declaration
@@ -113,11 +116,12 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score= brief= table= split= branch= want=
+rev= json= html= score= brief= table= split= branch= firstglobs= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
     branch) branch=$a split=1 want=; continue ;;
+    first) firstglobs="$firstglobs $a" want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
@@ -127,6 +131,7 @@ for a in "$@"; do
     --brief) brief=1 ;;
     --table) want=table ;;
     --split) split=1 ;;
+    --first) want=first ;;
     --branch) want=branch ;;
     --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
@@ -136,6 +141,7 @@ done
 case $want in
   table) echo "seam: --table wants a file" >&2; exit 2 ;;
   branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
+  first) echo "seam: --first wants a path pattern" >&2; exit 2 ;;
   mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
@@ -311,6 +317,7 @@ draw_split() {
     $1 == "totals" { printf "  %s%s%s\n", D, $2, R; next }
     $1 == "slice" {
       if ($3 == "rest") { restn = $2; restfiles = $7 + 0 }
+      if ($3 == "first") hasfirst = 1
       name = $4 ($5 != "" ? " " D "+" $5 R : "")
       size = ($3 == "rest" ? "" : $6 " definition" ($6 == 1 ? "" : "s") " · ") $7 " file" ($7 == 1 ? "" : "s") " · " $8 " line" ($8 == 1 ? "" : "s")
       printf "\n  %s%2d%s  %s%s%s  %s%s%s\n", B, $2, R, ($3 == "rest" ? D : B), name, R, D, size, R
@@ -329,8 +336,8 @@ draw_split() {
       # things the rest of a change most often waits on. seam cannot tell
       # from its edges which way round it is, so it says so rather than
       # letting the order pass for one it checked.
-      if (restfiles > 0)
-        printf "\n  %s%sslice %s is %d file%s seam read no definitions from, and it goes last.%s\n      %sIf anything before it needs them — a migration, a schema, a generated table — that order is the wrong way round, and seam cannot see it from here.%s\n",
+      if (restfiles > 0 && !hasfirst)
+        printf "\n  %s%sslice %s is %d file%s seam read no definitions from, and it goes last.%s\n      %sA migration or a schema in there has to go first, and seam has no language for either, so it cannot tell. Name them in .seam/first, or --first <pattern>, and they lead.%s\n",
           Y, B, restn, restfiles, (restfiles == 1 ? "" : "s"), R, D, R
       printf "\n  %s--branch <name> writes these as commits, in this order, on a new branch from the base.%s\n\n", D, R
     }
@@ -388,6 +395,34 @@ hazards() {
   ' "$tmp/defslice" "$tmp/fileslice" "$tmp/gone" -
 }
 
+# What goes before everything, because the repo says so and seam cannot tell:
+# a path pattern a line in .seam/first, then this user's, the way the language
+# files are found, and --first <pattern> on top. Matched against the files
+# seam read no definitions from, which are the only ones that can be lifted.
+plan() {
+  globs=$firstglobs
+  for d in ./.seam "${XDG_CONFIG_HOME:-$HOME/.config}/seam"; do
+    [ -f "$d/first" ] || continue
+    globs="$globs $(sed 's/#.*//' "$d/first" | tr -s '[:space:]' ' ')"
+    break
+  done
+  : > "$tmp/first.paths"
+  if [ -n "$(printf '%s' "$globs" | tr -d '[:space:]')" ]; then
+    # In a subshell with pathname expansion off: the patterns are meant for
+    # the paths in the change, and a bare `for g in $globs` matches them
+    # against the working directory first, so prisma/* became whatever is in
+    # prisma today and matched nothing in the table.
+    ( set -f
+      awk -F'\t' '$2 == "file" { print $1 }' "$out" | while read -r p; do
+        for g in $globs; do
+          case $p in $g) printf '%s\n' "$p"; break ;; esac
+        done
+      done ) >> "$tmp/first.paths"
+  fi
+  jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
+  jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" -f "$share/split.jq" < "$tmp/graph.json"
+}
+
 # --branch: the slices as commits, in the order the plan has them, on a new
 # branch from the base. Nothing is checked out and the worktree is not touched:
 # each commit is built in an index of its own, from the base tree, a slice at
@@ -399,7 +434,7 @@ hazards() {
 stack() {
   [ -n "$head" ] || { echo "seam: --branch wants two commits, not the worktree" >&2; exit 2; }
   git show-ref --verify -q "refs/heads/$branch" && { printf 'seam: %s is already a branch\n' "$branch" >&2; exit 2; }
-  jq --arg fmt json -f "$share/split.jq" < "$tmp/graph.json" > "$tmp/plan.json"
+  plan json > "$tmp/plan.json"
   n=$(jq '.slices | length' "$tmp/plan.json")
   [ "$n" -gt 1 ] || { echo "seam: one slice, which is the change as it is; nothing to split" >&2; exit 1; }
   hazards > "$tmp/hazards"
@@ -412,8 +447,9 @@ stack() {
     echo "seam: an edge seam has is a name inside a changed definition, and an import is not one, so it did not see this. Those slices belong in one commit; --split still shows the shape." >&2
     exit 1
   fi
-  restfiles=$(jq -r '[.slices[] | select(.kind == "rest") | .files | length] | add // 0' "$tmp/plan.json")
-  [ "$restfiles" -eq 0 ] || printf 'seam: the last slice is %s file%s seam read no definitions from. If anything before it needs them — a migration, a schema, a generated table — that order is the wrong way round, and seam cannot see it from here.\n' \
+  restfiles=$(jq -r 'if any(.slices[]; .kind == "first") then 0
+    else [.slices[] | select(.kind == "rest") | .files | length] | add // 0 end' "$tmp/plan.json")
+  [ "$restfiles" -eq 0 ] || printf 'seam: the last slice is %s file%s seam read no definitions from. A migration or a schema in there has to go first, and seam has no language for either, so it cannot tell. Name them in .seam/first, or --first <pattern>, and they lead.\n' \
     "$restfiles" "$([ "$restfiles" = 1 ] || echo s)" >&2
   headc=$(git rev-parse "$head^{commit}")
   parent=$(git rev-parse -q --verify "$base^{commit}" 2>/dev/null) || parent=
@@ -948,8 +984,8 @@ if [ -n "$html" ]; then
 elif [ -n "$split" ]; then
   graph "$out" > "$tmp/graph.json"
   if [ -n "$branch" ]; then stack
-  elif [ -n "$json" ]; then jq --arg fmt json -f "$share/split.jq" < "$tmp/graph.json"
-  else jq -r --arg fmt "" -f "$share/split.jq" < "$tmp/graph.json" | draw_split; fi
+  elif [ -n "$json" ]; then plan json
+  else plan "" | draw_split; fi
 elif [ -n "$score" ]; then
   if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 --arg fmt "" -f "$share/score.jq"
   else graph "$out" | jq -r --arg brief "" --arg fmt "" -f "$share/score.jq" | draw_score; fi

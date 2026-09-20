@@ -232,6 +232,21 @@ name is only looked for among definitions of its own language.
 Adding a language is a data file and no code; see `share/languages/`, where
 TypeScript, Rust and Python ship.
 
+**`first`** — implemented. A path pattern a line, matched against the files in
+the change that seam read no definitions from; those go in a slice of their own
+before every other, and `--split --branch` writes them as the first commit.
+seam has no language for a migration, a schema or a lockfile, so it has no edge
+from the code to them and puts them last, where nothing in the graph reaches —
+which is the wrong way round whenever the code waits on them. It does not
+guess: a migration wants to go first and a test file wants to go last, and both
+are equally unreadable to it. `--first <pattern>` says the same for one run.
+
+```
+# .seam/first
+prisma/*
+*.sql
+```
+
 **`references/<name>`** — not yet. Inside the change seam finds edges itself. The
 references that matter most come from outside it and from things seam should
 never know about: a compiler, an HTTP route table, a build graph, a test name.

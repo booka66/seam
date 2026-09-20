@@ -263,6 +263,33 @@ expect split/hazard-no-branch "$(git show-ref --verify -q refs/heads/cut && echo
 # The warning about the last slice, which seam cannot check: it is advice,
 # not a refusal, so a plan that is otherwise fine still says it and still writes.
 expect split/rest-last-warned "$(SEAM_COLOR=0 seam "$hzbase..$hzhead" --split | grep -c 'seam read no definitions from, and it goes last')" "1"
+
+# --- what the code waits on. seam has no language for a schema, so it has no
+# edge to it and puts it last; the repo says otherwise and it leads.
+fs=$tmp/fs
+mkdir "$fs" && cd "$fs" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'create table a (x int);\n' > schema.sql
+printf 'export const Row = { x: 1 };\nexport function read(): number { return Row.x; }\n' > row.ts
+git add -A && git commit -qm base && fsbase=$(git rev-parse HEAD)
+printf 'create table a (x int, y int);\n' > schema.sql
+printf 'export const Row = { x: 1, y: 2 };\nexport function read(): number { return Row.x + Row.y; }\n' > row.ts
+git add -A && git commit -qm head && fshead=$(git rev-parse HEAD)
+expect split/first-absent-is-last "$(seam "$fsbase..$fshead" --split --json | jq -r '.slices[-1].files[].path')" "schema.sql"
+expect split/first-leads "$(seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '.slices[0] | "\(.kind) \(.files[].path)"')" "first schema.sql"
+expect split/first-renumbers "$(seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '[.slices[].n] | join(",")')" "1,2"
+expect split/first-from-file "$(mkdir -p .seam && printf '# comment\n*.sql\n' > .seam/first
+  seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].kind')" "first"
+expect split/first-no-warning "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | grep -c 'has to go first')" "0"
+rm -rf .seam
+expect split/first-warns-without "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | grep -c 'has to go first')" "1"
+# A pattern is matched against the change, not against the working directory.
+expect split/first-not-globbed "$(mkdir -p sub && seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '.slices[0].files[].path')" "schema.sql"
+expect split/first-writes "$(seam "$fsbase..$fshead" --split --branch led --first '*.sql' >/dev/null 2>&1
+  git show --stat --format= led~1 | head -1 | tr -s ' ')" " schema.sql | 2 +-"
+expect split/first-ends-at-head "$(git diff-tree --quiet led "$fshead" && echo same || echo different)" "same"
+expect split/first-wants-a-pattern "$(seam "$fsbase..$fshead" --split --first 2>&1; echo "rc=$?")" "$(printf 'seam: --first wants a path pattern\nrc=2')"
+cd "$tmp" || exit 1
 cd "$tmp" || exit 1
 
 # --- the language files

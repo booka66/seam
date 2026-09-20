@@ -237,6 +237,34 @@ expect split/branch-exists "$(seam "$spbase..$sphead" --split --branch cut 2>&1;
 expect split/branch-no-worktree "$(seam worktree --branch x 2>&1; echo "rc=$?")" "$(printf 'seam: --branch wants two commits, not the worktree\nrc=2')"
 cd "$tmp" || exit 1
 
+# --- an order that does not stand up. A type moves out of one file and into
+# another, and every file that imports it is updated: seam has no edge for an
+# import, so the slice that takes the type away lands before the slices still
+# naming it, and every commit between the two has a name pointing at nothing.
+hz=$tmp/hz
+mkdir "$hz" && cd "$hz" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export const Mode = { A: "a" };\n' > mode.ts
+printf 'import { Mode } from "./mode";\nexport function pick(): string { return Mode.A; }\n' > use.ts
+printf 'import { Mode } from "./mode";\nexport function one() { return Mode.A; }\n' > one.ts
+printf 'import { Mode } from "./mode";\nexport function two() { return Mode.A; }\n' > two.ts
+git add -A && git commit -qm base && hzbase=$(git rev-parse HEAD)
+rm mode.ts
+printf 'export const Mode = { A: "a", B: "b" };\n' > gen.ts
+printf 'import { Mode } from "./gen";\nexport function pick(n: number): string { return n ? Mode.B : Mode.A; }\n' > use.ts
+printf 'import { Mode } from "./gen";\nexport function one() { return Mode.A; }\n' > one.ts
+printf 'import { Mode } from "./gen";\nexport function two() { return Mode.A; }\n' > two.ts
+git add -A && git commit -qm head && hzhead=$(git rev-parse HEAD)
+hzout=$(seam "$hzbase..$hzhead" --split --branch cut 2>&1; echo "rc=$?")
+expect split/hazard-refuses "$(printf '%s' "$hzout" | grep -c 'does not stand up')" "1"
+expect split/hazard-names-it "$(printf '%s' "$hzout" | grep -c 'takes Mode away')" "1"
+expect split/hazard-rc "$(printf '%s' "$hzout" | tail -1)" "rc=1"
+expect split/hazard-no-branch "$(git show-ref --verify -q refs/heads/cut && echo yes || echo no)" "no"
+# The warning about the last slice, which seam cannot check: it is advice,
+# not a refusal, so a plan that is otherwise fine still says it and still writes.
+expect split/rest-last-warned "$(SEAM_COLOR=0 seam "$hzbase..$hzhead" --split | grep -c 'seam read no definitions from, and it goes last')" "1"
+cd "$tmp" || exit 1
+
 # --- the language files
 expect lang/languages "$(seam --languages)" "$(printf 'python.yml\t.py .pyi\tpython\nrust.yml\t.rs\trust\ntypescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "41"

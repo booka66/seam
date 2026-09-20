@@ -310,6 +310,7 @@ draw_split() {
     $1 == "rev" { printf "  %sseam%s  %s%s%s\n", B, R, D, $2, R; next }
     $1 == "totals" { printf "  %s%s%s\n", D, $2, R; next }
     $1 == "slice" {
+      if ($3 == "rest") { restn = $2; restfiles = $7 + 0 }
       name = $4 ($5 != "" ? " " D "+" $5 R : "")
       size = ($3 == "rest" ? "" : $6 " definition" ($6 == 1 ? "" : "s") " · ") $7 " file" ($7 == 1 ? "" : "s") " · " $8 " line" ($8 == 1 ? "" : "s")
       printf "\n  %s%2d%s  %s%s%s  %s%s%s\n", B, $2, R, ($3 == "rest" ? D : B), name, R, D, size, R
@@ -321,8 +322,70 @@ draw_split() {
       printf "      %s%s%s%s\n", $3, (note != "" ? "  " : ""), ($4 != "" ? Y : D), (note != "" ? note R : "")
       next
     }
-    END { printf "\n  %s--branch <name> writes these as commits, in this order, on a new branch from the base.%s\n\n", D, R }
+    END {
+      # The rest is what seam read no definitions from, and it goes last
+      # because nothing in the graph reaches it. A migration, a schema, a
+      # generated table, a build file are all in there, and those are the
+      # things the rest of a change most often waits on. seam cannot tell
+      # from its edges which way round it is, so it says so rather than
+      # letting the order pass for one it checked.
+      if (restfiles > 0)
+        printf "\n  %s%sslice %s is %d file%s seam read no definitions from, and it goes last.%s\n      %sIf anything before it needs them — a migration, a schema, a generated table — that order is the wrong way round, and seam cannot see it from here.%s\n",
+          Y, B, restn, restfiles, (restfiles == 1 ? "" : "s"), R, D, R
+      printf "\n  %s--branch <name> writes these as commits, in this order, on a new branch from the base.%s\n\n", D, R
+    }
   '
+}
+
+# What the order does not hold, which seam cannot see from its own edges: a
+# definition one slice takes away that a slice after it is still naming. An
+# edge is a name found inside a changed definition, and an import specifier is
+# not inside one, so a type that moves package leaves every file importing it
+# pointing at nothing until the slice that rewrites those imports lands. The
+# commits in between do not build, and only the last is checked against the
+# head tree, so nothing else would say so.
+#
+# A line a later slice takes away is a line the base had, and that the tree
+# still has at the earlier commit: that is the evidence, and it is in the diff
+# seam has already read. One row a collision: the name, the slice that takes
+# it, the slice that still names it, a file, and how many more.
+hazards() {
+  [ -n "$head" ] || return 0
+  jq -r '.slices[] as $s | $s.definitions[]? | [., ($s.n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/defslice"
+  jq -r '.slices[] as $s | $s.files[]? | [.path, ($s.n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/fileslice"
+  # A definition that goes, by the name its users write: a TypeScript type
+  # sharing a name with a const is "type X" here and X everywhere else.
+  awk -F'\t' '$2 != "file" && $6 == "removed" {
+      nm = $3; sub(/^type /, "", nm)
+      if (nm != "" && nm !~ /[^A-Za-z0-9_$]/) print $1 "#" ($4 == "" ? $3 : $4 "." $3) "\t" nm "\t" $1
+    }' "$out" | sort -u > "$tmp/gone"
+  [ -s "$tmp/gone" ] || return 0
+  git diff -U0 --no-renames "$base" "$head" 2>/dev/null |
+  awk -F'\t' '
+    function boundary(line, nm,   re) { re = nm; gsub(/\$/, "\\$", re); return line ~ ("(^|[^A-Za-z0-9_$])" re "($|[^A-Za-z0-9_$])") }
+    FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
+    FILENAME == ARGV[2] { if (!($1 in fat) || $2 + 0 > fat[$1]) fat[$1] = $2 + 0; next }
+    FILENAME == ARGV[3] { g++; ID[g] = $1; NM[g] = $2; HOME_[g] = $3; next }
+    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+    /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+    /^-[^-]/ || /^-$/ {
+      if (!(f in fat)) next
+      for (x = 1; x <= g; x++) {
+        if (HOME_[x] == f) continue
+        if (!(ID[x] in at) || at[ID[x]] >= fat[f]) continue
+        if (!boundary(substr($0, 2), NM[x])) continue
+        k = NM[x] SUBSEP at[ID[x]] SUBSEP fat[f]
+        if (!(k in seen)) { seen[k] = f; order[++m] = k }
+        more[k]++
+      }
+    }
+    END {
+      for (i = 1; i <= m; i++) {
+        split(order[i], w, SUBSEP)
+        print w[1] "\t" w[2] "\t" w[3] "\t" seen[order[i]] "\t" (more[order[i]] - 1)
+      }
+    }
+  ' "$tmp/defslice" "$tmp/fileslice" "$tmp/gone" -
 }
 
 # --branch: the slices as commits, in the order the plan has them, on a new
@@ -339,6 +402,19 @@ stack() {
   jq --arg fmt json -f "$share/split.jq" < "$tmp/graph.json" > "$tmp/plan.json"
   n=$(jq '.slices | length' "$tmp/plan.json")
   [ "$n" -gt 1 ] || { echo "seam: one slice, which is the change as it is; nothing to split" >&2; exit 1; }
+  hazards > "$tmp/hazards"
+  if [ -s "$tmp/hazards" ]; then
+    echo "seam: this order does not stand up, so seam has not written it." >&2
+    while IFS='	' read -r nm from to where more; do
+      printf 'seam:   slice %s takes %s away, and slice %s is still naming it (%s%s).\n' \
+        "$from" "$nm" "$to" "$where" "$([ "$more" -gt 0 ] && printf ', and %s more' "$more")" >&2
+    done < "$tmp/hazards"
+    echo "seam: an edge seam has is a name inside a changed definition, and an import is not one, so it did not see this. Those slices belong in one commit; --split still shows the shape." >&2
+    exit 1
+  fi
+  restfiles=$(jq -r '[.slices[] | select(.kind == "rest") | .files | length] | add // 0' "$tmp/plan.json")
+  [ "$restfiles" -eq 0 ] || printf 'seam: the last slice is %s file%s seam read no definitions from. If anything before it needs them — a migration, a schema, a generated table — that order is the wrong way round, and seam cannot see it from here.\n' \
+    "$restfiles" "$([ "$restfiles" = 1 ] || echo s)" >&2
   headc=$(git rev-parse "$head^{commit}")
   parent=$(git rev-parse -q --verify "$base^{commit}" 2>/dev/null) || parent=
   # A shared file: which slice each definition's lines go to, the slice the

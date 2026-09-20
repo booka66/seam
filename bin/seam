@@ -530,14 +530,25 @@ stack() {
   [ "$restfiles" -eq 0 ] || printf 'seam: the last slice is %s file%s seam read no definitions from. A migration or a schema in there has to go first, and seam has no language for either, so it cannot tell. Name them in .seam/first, or --first <pattern>, and they lead.\n' \
     "$restfiles" "$([ "$restfiles" = 1 ] || echo s)" >&2
   headc=$(git rev-parse "$head^{commit}")
+  zeros=0000000000000000000000000000000000000000
+  # The check is the only thing here that knows whether a stack stands up, so
+  # it is allowed to change the plan. When a slice fails and every file the
+  # check named belongs to other slices, those are one commit with it: they
+  # fuse and the whole thing is built again. Whatever that breaks, the next
+  # pass catches — a fuse only ever makes the stack shorter, and the slices
+  # before the one that failed are the same commits they were, so they are
+  # not checked twice.
+  fused=0 verified=0
+  while :; do
   parent=$(git rev-parse -q --verify "$base^{commit}" 2>/dev/null) || parent=
   # A shared file: which slice each definition's lines go to, the slice the
   # unclaimed lines go to (no id), and the last slice that touches it.
   jq -r '.shared[] | .path as $p | (.definitions | to_entries[] | [$p, .key, .value] | @tsv), ([$p, "", .rest] | @tsv)' "$tmp/plan.json" > "$tmp/owners"
   jq -r '.shared[] | [.path, ([.rest] + [.definitions[]] | max)] | @tsv' "$tmp/plan.json" > "$tmp/last"
-  zeros=0000000000000000000000000000000000000000
+  rm -f "$tmp/index"
   export GIT_INDEX_FILE="$tmp/index"
   git read-tree "$base" || exit 1
+  again=
   k=1
   while [ "$k" -le "$n" ]; do
     # Whole from the head: this slice's own files, and any shared file this
@@ -602,7 +613,9 @@ stack() {
     # and the worktree you are in is not touched; what it needs to run there —
     # a link to node_modules, a warm cache — is its own business, and it is
     # told which slice it is on.
-    if [ -n "$check" ]; then
+    if [ -n "$check" ] && [ "$k" -le "$verified" ]; then
+      printf '  %s  %s  %s ... ok\n' "$k" "$short" "$subject"
+    elif [ -n "$check" ]; then
       printf '  %s  %s  %s ... ' "$k" "$short" "$subject"
       # One worktree for the whole stack, moved from commit to commit, rather
       # than one a commit. A worktree of a monorepo is ten seconds and a
@@ -624,6 +637,55 @@ stack() {
       ok=$?
       if [ "$ok" -ne 0 ]; then
         echo "no"
+        # Which other slices this one was waiting for. Two things point at
+        # them: a path the check named that another slice has, and the name of
+        # a changed definition in what it said — an error is reported where it
+        # is noticed, which is often not where the cause was changed, and a
+        # typechecker says the name of the type it could not match.
+        jq -r '.slices[] | .n as $n
+               | (.files[] | [.path, ($n | tostring)] | @tsv),
+                 (.definitions[] | [(sub("^.*#"; "") | sub("^type "; "")), ($n | tostring)] | @tsv)' \
+          "$tmp/plan.json" | awk -F'\t' 'length($1) > 2' > "$tmp/whose"
+        awk -F'\t' -v me="$k" '
+          function boundary(line, nm,   re) { re = nm; gsub(/\$/, "\\$", re); return line ~ ("(^|[^A-Za-z0-9_$])" re "($|[^A-Za-z0-9_$])") }
+          FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
+          {
+            for (p in at) {
+              if (at[p] == me) continue
+              if (p ~ /\//) { if (index($0, p)) hit[at[p]] = 1 }
+              else if (boundary($0, p)) hit[at[p]] = 1
+            }
+          }
+          END { n = 0; for (x in hit) { n++; list = list " " x }
+                if (n) print substr(list, 2) }
+        ' "$tmp/whose" "$tmp/check.out" > "$tmp/blame"
+        # Nothing attributable, but there is a slice after this one: a
+        # typechecker truncates a union it cannot match and so names neither a
+        # file nor a definition, and the cause is still somewhere ahead. Take
+        # the next slice and go again — blunt, but it only ever goes one way,
+        # and the check is what says when to stop. A change that ends up one
+        # commit was one commit; that is an answer, and a proved one.
+        if [ "$ok" -ne 127 ] && [ ! -s "$tmp/blame" ] && [ "$k" -lt "$n" ] && [ "$fused" -lt 6 ]; then
+          printf '%s\n' "$((k + 1))" > "$tmp/blame"
+          blind=1
+        else
+          blind=
+        fi
+        if [ "$ok" -ne 127 ] && [ -s "$tmp/blame" ] && [ "$fused" -lt 6 ]; then
+          # Fuse and go again rather than hand back a plan already known to be
+          # wrong. Six, because a change that needs a seventh is one commit
+          # and is taking a long time to say so.
+          if [ -n "$blind" ]; then
+            printf 'it wants something ahead of it, unnamed; taking slice %s\n' "$(cat "$tmp/blame")"
+          else
+            printf 'it wants %s\n' "$(sed 's/ /, /g; s/^/slice /' "$tmp/blame")"
+          fi
+          jq --argjson fuse "$(printf '%s %s' "$k" "$(cat "$tmp/blame")" | jq -R 'split(" ") | map(select(length > 0) | tonumber)')" \
+            -f "$share/merge.jq" < "$tmp/plan.json" > "$tmp/plan.new" && mv "$tmp/plan.new" "$tmp/plan.json" || exit 1
+          n=$(jq '.slices | length' "$tmp/plan.json")
+          verified=$((k - 1)); fused=$((fused + 1)); again=1
+          break
+        fi
         printf 'seam: slice %s of %s does not pass the check, so %s is not written.\n' "$k" "$n" "$branch" >&2
         if [ -s "$tmp/check.out" ]; then
           printf 'seam: the last twenty lines of it:\n' >&2
@@ -631,24 +693,14 @@ stack() {
         else
           printf 'seam: it said nothing, and exited %s.\n' "$ok" >&2
         fi
-        # Which slices the check named files from. A check that fails says
-        # where it failed, and every path it mentions that this change also
-        # touches belongs to a slice: those are the ones this one is waiting
-        # for, and naming them is the difference between "it did not work"
-        # and "put these together".
-        jq -r '.slices[] | .n as $n | .files[] | [.path, ($n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/whose"
-        awk -F'\t' -v me="$k" '
-          FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
-          { for (p in at) if (at[p] != me && index($0, p)) hit[at[p]] = 1 }
-          END { n = 0; for (x in hit) { n++; list = list (list == "" ? "" : ", ") x }
-                if (n) print (n == 1 ? "slice " : "slices ") list }
-        ' "$tmp/whose" "$tmp/check.out" > "$tmp/blame"
         if [ "$ok" -eq 127 ]; then
           printf 'seam: that is the check not running, rather than the slice failing. It runs under /bin/sh, so a command your interactive shell finds by way of a version manager or a function is not always there; give it a path, or a shell that loads what it needs.\n' >&2
-        elif [ -s "$tmp/blame" ]; then
-          printf 'seam: it named files that %s has. This change does not come apart there: those slices belong in one commit with this, or something they share does.\n' "$(cat "$tmp/blame")" >&2
+        elif [ "$fused" -ge 6 ]; then
+          printf 'seam: seam has fused six times and it still does not stand up. This change is one commit.\n' >&2
+        elif [ "$k" -ge "$n" ]; then
+          printf 'seam: and it is the last slice, so there is nothing left to fuse it with. The change as a whole does not pass this check — which is worth knowing, and is not about the split.\n' >&2
         else
-          printf 'seam: that slice needs what a later one has. Put it with the slice that completes it, or say what it waits on in .seam/first.\n' >&2
+          printf 'seam: and nothing it said points at another slice. This slice does not stand up on its own.\n' >&2
         fi
         exit 1
       fi
@@ -658,6 +710,9 @@ stack() {
     fi
     parent=$commit
     k=$((k + 1))
+  done
+  [ -n "$again" ] || break
+  printf '  %s\n' "── fused, and building it again ──"
   done
   unset GIT_INDEX_FILE
   [ ! -d "$tmp/wt" ] || git worktree remove --force "$tmp/wt" 2>/dev/null

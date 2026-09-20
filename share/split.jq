@@ -237,8 +237,20 @@ def tested:
         shared: [$shared[] | .rest = $renum[.rest | tostring]
                  | .definitions |= with_entries(.value = $renum[.value | tostring])]}
    end) as $plan
-| ($plan.slices) as $slices
-| ($plan.shared) as $shared
+# And the rest, when there is almost nothing in it. It is never a story so the
+# fold above never sees it, and a single line of a build file at the end of a
+# stack is a commit a reviewer opens for nothing. Same two tests, and the same
+# reason it is safe: the slice before it plus it, in that order, is what the
+# two of them were.
+| ($plan.slices) as $ss
+| (($ss | map(.lines) | add) // 0) as $whole2
+| (if ($ss | length) > 1 and ($ss[-1].kind == "rest")
+      and ($ss[-1].lines < small) and ($ss[-1].lines * share < $whole2)
+   then ($ss[:-2] + [$ss[-2] + {files: ($ss[-2].files + $ss[-1].files),
+                                lines: ($ss[-2].lines + $ss[-1].lines)}])
+   else $ss end) as $slices
+| ($plan.shared | map(if .rest == ($ss | length) and ($slices | length) < ($ss | length)
+                      then .rest = ($slices | length) else . end)) as $shared
 | if $fmt == "json" then
     {rev: $g.rev, base: $g.base, head: $g.head, slices: $slices, shared: $shared}
   else

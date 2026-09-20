@@ -472,9 +472,13 @@ sweeps() {
 
 plan() {
   globs=$firstglobs
-  for d in ./.seam "${XDG_CONFIG_HOME:-$HOME/.config}/seam"; do
-    [ -f "$d/first" ] || continue
-    globs="$globs $(sed 's/#.*//' "$d/first" | tr -s '[:space:]' ' ')"
+  # first.local before first, this repo before this user: a repo that comes to
+  # ship one of these should not silently take over yours, and yours is the
+  # one thing here git is not meant to see.
+  for d in ./.seam/first.local ./.seam/first \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/seam/first.local" "${XDG_CONFIG_HOME:-$HOME/.config}/seam/first"; do
+    [ -f "$d" ] || continue
+    globs="$globs $(sed 's/#.*//' "$d" | tr -s '[:space:]' ' ')"
     break
   done
   : > "$tmp/first.paths"

@@ -282,6 +282,28 @@ expect refs/a-broken-one-is-quiet "$(seam "$rfbase..$rfhead" --json | jq -r '.re
 rm -rf .seam
 cd "$tmp" || exit 1
 
+# --- the rest, when there is almost nothing in it. It is never a story, so
+# the fold above never sees it, and one line of a build file at the end of a
+# stack is a commit opened for nothing.
+tr_=$tmp/tr
+mkdir "$tr_" && cd "$tr_" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export type Wide = { a: number };\nexport function wide(o: Wide): number { return o.a; }\n' > big.ts
+printf 'one\n' > BUILD.bazel
+git add -A && git commit -qm base && trbase=$(git rev-parse HEAD)
+{ printf 'export type Wide = { a: number; b: number };\nexport function wide(o: Wide, n: number): number {\n'
+  i=1; while [ $i -le 60 ]; do printf '  const x%s = o.a + %s;\n' "$i" "$i"; i=$((i+1)); done
+  printf '  return o.b + n;\n}\n'; } > big.ts
+printf 'two\n' > BUILD.bazel
+git add -A && git commit -qm head && trhead=$(git rev-parse HEAD)
+expect rest/tiny-folded "$(seam "$trbase..$trhead" --split --json | jq -r '[.slices[] | select(.kind == "rest")] | length')" "0"
+expect rest/tiny-carried "$(seam "$trbase..$trhead" --split --json | jq -r '[.slices[].files[].path] | index("BUILD.bazel") != null')" "true"
+# A rest worth its own commit keeps it.
+i=1; while [ $i -le 60 ]; do printf 'line %s\n' "$i"; i=$((i+1)); done > notes.txt
+git add -A && git commit -qm bulk && trbulk=$(git rev-parse HEAD)
+expect rest/big-kept "$(seam "$trhead..$trbulk" --split --json | jq -r '[.slices[] | select(.kind == "rest")] | length')" "1"
+cd "$tmp" || exit 1
+
 # --- a sweep: the same edit in file after file, which is one thing to read.
 sw=$tmp/sw
 mkdir "$sw" && cd "$sw" || exit 1
@@ -345,6 +367,12 @@ expect split/first-leads "$(seam "$fsbase..$fshead" --split --json --first '*.sq
 expect split/first-renumbers "$(seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '[.slices[].n] | join(",")')" "1,2"
 expect split/first-from-file "$(mkdir -p .seam && printf '# comment\n*.sql\n' > .seam/first
   seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].kind')" "first"
+# first.local wins over first, so a repo shipping one does not take over yours.
+expect split/first-local-wins "$(mkdir -p .seam && printf '*.nope\n' > .seam/first && printf '*.sql\n' > .seam/first.local
+  seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].files[].path')" "schema.sql"
+rm -f .seam/first.local
+expect split/first-without-local "$(seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].kind')" "story"
+printf '*.sql\n' > .seam/first
 expect split/first-no-warning "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | grep -c 'has to go first')" "0"
 rm -rf .seam
 expect split/first-warns-without "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | grep -c 'has to go first')" "1"

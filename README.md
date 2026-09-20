@@ -267,6 +267,10 @@ prisma/*
 *.sql
 ```
 
+`first.local` is read before `first`, and this repo's before this user's, so a
+repo that comes to ship one does not quietly take over yours. A `.local` is
+the one of these git is not meant to see.
+
 **`references/<name>`** — implemented. A command reading the definition table
 on stdin and writing `from⇥to⇥facet⇥note` rows. Inside the change seam finds
 edges itself; the ones that matter most come from outside it and from things

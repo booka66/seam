@@ -35,6 +35,15 @@
 # A piece worth cutting has at least this many definitions, and a cut has to
 # leave at least two stories behind while taking no more than half the piece.
 def big: 6;
+# A slice below this many changed lines, and below this share of the change,
+# is not worth a commit of its own: a reviewer pays a context switch for every
+# one, and a dozen lines does not cover it, so it goes in with the slice
+# before it. Both tests, because twelve lines out of six hundred is an offcut
+# and twelve out of forty is the change. Merging is always safe — two closed
+# pieces taken in stack order are one closed piece — so this only ever makes
+# the stack shorter, never wrong.
+def small: 20;
+def share: 12;
 
 # A slice with no definition in it has no name to take, so it is named after
 # what it carries: a commit subject reading "the rest" tells a reviewer
@@ -117,11 +126,21 @@ def tested:
     | {kind: "story", roots: $roots, definitions: ($defs | sort_by(-lines) | map(.id)),
        size: ($defs | map(lines) | add)}]
    | sort_by(-.size)) as $found
-| (if ($cut.hubs | length) == 0 then [] else
-     [($cut.taken | keys | map($byid[.])) as $defs
-      | {kind: "base", roots: ($cut.hubs | map($byid[.].name)),
-         definitions: ($defs | sort_by(-lines) | map(.id)), size: ($defs | map(lines) | add)}] end
-   + $found
+| ((if ($cut.hubs | length) == 0 then [] else
+      [($cut.taken | keys | map($byid[.])) as $defs
+       | {kind: "base", roots: ($cut.hubs | map($byid[.].name)),
+          definitions: ($defs | sort_by(-lines) | map(.id)), size: ($defs | map(lines) | add)}] end
+    + $found)
+   # The small ones folded into the slice before them, which for a story is
+   # always a bigger one: the stories are in size order, and the base, when
+   # there is one, leads.
+   | (map(.size) | add // 0) as $whole
+   | reduce .[] as $s ([];
+       if (length > 0) and $s.kind == "story" and ($s.size < small) and ($s.size * share < $whole)
+       then .[:-1] + [.[-1] + {roots: (.[-1].roots + $s.roots),
+                               definitions: (.[-1].definitions + $s.definitions),
+                               size: (.[-1].size + $s.size)}]
+       else . + [$s] end)
    | to_entries | map(.value + {n: (.key + 1), paths: (.value.definitions | map($byid[.].path) | unique)})) as $slices
 | (reduce $slices[] as $s ({}; reduce $s.definitions[] as $d (.; .[$d] = $s.n))) as $slot
 | (reduce $slices[] as $s ({}; reduce $s.paths[] as $p (.; .[$p] += [$s.n]))) as $owners

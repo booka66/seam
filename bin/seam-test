@@ -291,6 +291,34 @@ expect split/first-not-globbed "$(mkdir -p sub && seam "$fsbase..$fshead" --spli
 expect split/first-writes "$(seam "$fsbase..$fshead" --split --branch led --first '*.sql' >/dev/null 2>&1
   git show --stat --format= led~1 | head -1 | tr -s ' ')" " schema.sql | 2 +-"
 expect split/first-ends-at-head "$(git diff-tree --quiet led "$fshead" && echo same || echo different)" "same"
+# --- a slice too small for a commit of its own goes in with the one before
+# it. Both tests have to bite: twelve lines out of six hundred is an offcut,
+# twelve out of forty is the change.
+sm=$tmp/sm
+mkdir "$sm" && cd "$sm" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export type Wide = { a: number };\nexport function wide(o: Wide): number {\n  return o.a;\n}\n' > big.ts
+printf 'export type Thin = { z: number };\nexport function thin(o: Thin): number { return o.z; }\n' > tiny.ts
+git add -A && git commit -qm base && smbase=$(git rev-parse HEAD)
+{ printf 'export type Wide = { a: number; b: number; c: number };\nexport function wide(o: Wide, n: number): number {\n'
+  i=1; while [ $i -le 100 ]; do printf '  const x%s = o.a + %s;\n' "$i" "$i"; i=$((i+1)); done
+  printf '  return o.b + n;\n}\n'; } > big.ts
+printf 'export type Thin = { z: number; y: number };\nexport function thin(o: Thin): number { return o.y; }\n' > tiny.ts
+git add -A && git commit -qm head && smhead=$(git rev-parse HEAD)
+expect split/small-folded "$(seam "$smbase..$smhead" --split --json | jq -r '[.slices[] | select(.kind == "story")] | length')" "1"
+expect split/small-carried "$(seam "$smbase..$smhead" --split --json | jq -r '[.slices[].definitions[]] | map(select(. == "tiny.ts#thin")) | length')" "1"
+# The same two stories where the small one is not small against the change:
+# both stay, because a context switch is worth it when it is half of what
+# there is to read.
+# Both touched by about as much, so neither is an offcut of the other: the
+# hundred lines of body stay put and each story changes a line or two.
+sed 's/export type Wide = .*/export type Wide = { a: number; b: number; c: number; d: number };/' big.ts > big.new && mv big.new big.ts
+sed 's/  return o.b + n;/  return o.d + n;/' big.ts > big.new && mv big.new big.ts
+printf 'export type Thin = { z: number; y: number; x: number };\nexport function thin(o: Thin): number { return o.x; }\n' > tiny.ts
+git add -A && git commit -qm two && smtwo=$(git rev-parse HEAD)
+expect split/small-kept-when-whole "$(seam "$smhead..$smtwo" --split --json | jq -r '[.slices[] | select(.kind == "story")] | length')" "2"
+cd "$tmp" || exit 1
+
 expect split/first-wants-a-pattern "$(seam "$fsbase..$fshead" --split --first 2>&1; echo "rc=$?")" "$(printf 'seam: --first wants a path pattern\nrc=2')"
 cd "$tmp" || exit 1
 cd "$tmp" || exit 1

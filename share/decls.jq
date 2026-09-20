@@ -4,13 +4,19 @@
 # A renderer that places something of its own in a declaration reads this too
 # (otis's git-callers does, for the callers it finds outside the change).
 # separated.
-# Whitespace first, then the spaces a bracket or a comma does not want. A
-# gsub of \s+ over every declaration head is most of what this file costs, and
-# a head that is already single-spaced needs none of it, so it is asked first;
-# what is left rebuilds from its non-space runs, which is the same answer and
-# half the time. One pass takes the three spaces that go, since the fourth the
-# long way round (", )") cannot survive the third.
-def squeeze: if test("[\t\n\u000b\f\r]|  |^ | $") then [scan("\\S+")] | join(" ") else . end;
+# Whitespace first, then the spaces a bracket or a comma does not want.
+# Squeezing the whitespace out of every declaration head is most of what this
+# file costs, because a regex that rewrites a string walks and rebuilds it once
+# a match, which is the square of a head with a great many spaces in it — and a
+# head can be very large, since a declaration whose body is its last block puts
+# a whole configuration object in its interface. So the spaces go by splitting
+# on them, which is no regex and one pass; only whitespace that is not a plain
+# space is rewritten, and only when there is some. [^\S ] rather than a class
+# of its own, so that whatever jq calls whitespace here it calls whitespace
+# there. One pass takes the three spaces that go, since the fourth the long way
+# round (", )") cannot survive the third.
+def squeeze: (if test("[^\\S ]") then gsub("[^\\S ]"; " ") else . end)
+  | split(" ") | map(select(length > 0)) | join(" ");
 def clean: squeeze | gsub("(?<=\\() | (?=[,)])"; "") | gsub("\\s*=>\\s*$"; "");
 # The code alone: a name in a string or a comment is not a use of it.
 # What a string and a comment look like is the language's noise (a

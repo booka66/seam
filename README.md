@@ -204,9 +204,9 @@ statement).
 ## Speed
 
 It is shell over `git`, `ast-grep` and `jq`. A change of 92 files, 145
-definitions, reads in **2.0s** and draws its page in 2.2s, where the two took
+definitions, reads in **1.3s** and draws its page in 1.5s, where the two took
 4.6s and 5.2s. A synthetic one of 400 files and 8000 definitions, which nobody
-can review, takes 9s where it took 53s.
+can review, takes 8s where it took 53s.
 
 ast-grep's own parse is the cheap part, and it reads a directory in parallel.
 What costs is the jq that flattens its JSON and the awk that reads the two
@@ -243,14 +243,18 @@ Two more that are not loops:
   is listed as a plain file instead, the way one seam has no language for is.
   Nobody reads a file that size by definition anyway.
 
-What is left is the jq flatten, and in it `gsub`, which walks and rebuilds the
-string once a match. Squeezing the whitespace out of every declaration head was
-two thirds of it, and is now asked for only where there is whitespace to
-squeeze — but that rebuilding is the square of a head with a great many spaces
-in it, and a few heads are very large. Anything whose last block is its body
-puts everything before it in the interface, so a declaration configured by a
-long object literal can carry tens of kilobytes of "head"; those few are most of
-what is left, and where the next win is.
+One more that is not a loop either, and was two thirds of the jq: **a regex
+that rewrites a string walks and rebuilds it once a match**, so squeezing the
+whitespace out of a declaration head is the square of the spaces in it. That is
+nothing for a head of a line, and a head is not always a line — a declaration
+whose body is its last block puts a whole configuration object in its
+interface, and one of those runs to tens of kilobytes. The spaces now go by
+splitting on them, which is no regex and one pass, and only whitespace that is
+not a plain space is rewritten at all.
+
+What is left is spread thin: about half the jq that flattens ast-grep's JSON,
+and the rest the awk, `git` and the two trees coming out. There is no one thing
+to take out next.
 
 ## What it wants
 

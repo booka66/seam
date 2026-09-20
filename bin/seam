@@ -82,6 +82,16 @@ rules() {
     done
   done
 }
+# What each extension's text looks like, for share/decls.jq: its noise (what a
+# comment and a string are) and its keys (after which a name is not a use),
+# from the language's #seam: lines. A language that says neither reads like
+# TypeScript.
+langs() {
+  for f in $langfiles; do
+    sed -n 's/^#seam: //p' "$f" | jq -R -s 'split("\n") | map(select(length > 0) | capture("^(?<key>[a-z]+) ?(?<value>.*)$")) | from_entries
+      | . as $o | .extensions | split(" ") | map(select(length > 0) | {key: ., value: ($o | {noise, keys} | with_entries(select(.value != null)))}) | from_entries'
+  done | jq -s -c 'reverse | add // {}'
+}
 # Which paths to parse at all: everything else lists as a file. A character
 # class rather than \. so the regex survives being passed to awk as a string.
 extre="[.]($(for f in $langfiles; do lang_field "$f" extensions; done | sed 's/^\.//' | sort -u | tr '\n' '|' | sed 's/|$//'))$"
@@ -199,17 +209,22 @@ diffs() {
       [ -e "$p" ] && ! git ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && git diff --no-index -U999999 /dev/null "$p" 2>/dev/null
     done < "$tmp/dpaths"
   fi > "$tmp/full"
+  # The ranges are kept by file, so a line of the diff is tried against the
+  # definitions of its own file rather than against every definition in the
+  # change: the whole of every changed file walked against all of them is the
+  # product of the two, and it was most of what a page cost to draw.
   awk -F'\t' '
-    FILENAME == ARGV[1] { n++; P[n] = $1; ID[n] = $2; NA[n] = $3 + 0; NZ[n] = $4 + 0; OA[n] = $5 + 0; OZ[n] = $6 + 0; next }
+    FILENAME == ARGV[1] { n++; ID[n] = $2; NA[n] = $3 + 0; NZ[n] = $4 + 0; OA[n] = $5 + 0; OZ[n] = $6 + 0; RI[$1, ++RN[$1]] = n; next }
     /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
-    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo
+      nf = RN[f] + 0; for (x = 1; x <= nf; x++) FR[x] = RI[f, x]; next }
     /^@@/ { split($0, w, " "); split(w[2], a, ","); o = substr(a[1], 2) + 0; split(w[3], b, ","); nn = substr(b[1], 2) + 0; next }
     {
       c = substr($0, 1, 1)
       if (c != " " && c != "+" && c != "-") next
       text = substr($0, 2)
-      for (r = 1; r <= n; r++) {
-        if (P[r] != f) continue
+      for (x = 1; x <= nf; x++) {
+        r = FR[x]
         keep = 0
         if (c != "-" && NA[r] && nn >= NA[r] && nn <= NZ[r]) keep = 1
         if (c != "+" && OA[r] && o >= OA[r] && o <= OZ[r]) keep = 1
@@ -334,29 +349,46 @@ build() {
         git cat-file --batch-check='%(objectsize) %(rest)' 2>/dev/null |
         awk -v max="$max" '$1 ~ /^[0-9]+$/ && $1 + 0 <= max { sub(/^[0-9]+ /, ""); print }'
     else
-      while read -r p; do [ -f "$p" ] && [ "$(wc -c < "$p")" -le "$max" ] && printf '%s\n' "$p"; done
+      # The worktree, where the size is the file's own. One wc for all of them
+      # rather than a fork a file, which was a fifth of what reading the
+      # worktree cost; the paths go in first so that wc's own total line, and
+      # anything else it says, cannot be mistaken for one of them.
+      while read -r p; do [ -f "$p" ] && printf '%s\n' "$p"; done > "$tmp/sized.in"
+      tr '\n' '\0' < "$tmp/sized.in" | xargs -0 wc -c 2>/dev/null > "$tmp/sized.wc"
+      awk -v max="$max" 'FILENAME == ARGV[1] { want[$0] = 1; next }
+        { sz = $1 + 0; sub(/^[ \t]*[0-9]+[ \t]/, ""); if (($0 in want) && sz <= max) print }' "$tmp/sized.in" "$tmp/sized.wc"
     fi
   }
   awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "D" { print $2 }' "$tmp/status" | under "$head" > "$tmp/new.paths"
   awk -F'\t' -v ext="$extre" '$2 ~ ext && $1 != "A" && $1 != "?" { print $2 }' "$tmp/status" | under "$base" > "$tmp/old.paths"
-  rules=$(rules)
+  rules=$(rules) langs=$(langs)
   # Both trees, extracted once (one git each), parsed once (one ast-grep each,
   # which reads a directory in parallel), then flattened to a row a match. The
   # text rides along for the reading order, escaped by @tsv alone: jq's gsub
   # over a 900-line class is seconds, @tsv is not.
-  for side in old new; do
+  #
+  # A match a line rather than one array of them, because jq holds a whole
+  # array before it reads any of it: a change of eight thousand definitions is
+  # a hundred megabytes of JSON, and a gigabyte and a half of jq to walk it.
+  # Neither side needs the other, so both run at once and the rows go together
+  # after, old first, which is the order the rest of this reads them in.
+  side_decls() {
+    side=$1
     if [ ! -s "$tmp/$side.paths" ]; then
-      echo '[]'
+      :
     elif [ "$side" = new ] && [ -z "$head" ]; then
-      tr '\n' '\0' < "$tmp/new.paths" | xargs -0 ast-grep scan --json=compact --inline-rules "$rules" 2>/dev/null
+      tr '\n' '\0' < "$tmp/new.paths" | xargs -0 ast-grep scan --json=stream --inline-rules "$rules" 2>/dev/null
     else
       mkdir "$tmp/$side"
       rev_=$base; [ "$side" = new ] && rev_=$head
       tr '\n' '\0' < "$tmp/$side.paths" | xargs -0 git archive "$rev_" -- 2>/dev/null | tar -x -C "$tmp/$side" 2>/dev/null
-      (cd "$tmp/$side" && ast-grep scan --json=compact --inline-rules "$rules" . 2>/dev/null)
+      (cd "$tmp/$side" && ast-grep scan --json=stream --inline-rules "$rules" . 2>/dev/null)
     fi |
-    jq -r --arg side "$side" -f "$share/decls.jq" >> "$tmp/decls"
-  done
+    jq -r --arg side "$side" --argjson langs "$langs" -f "$share/decls.jq" > "$tmp/$side.decls"
+  }
+  side_decls old & side_decls new &
+  wait
+  cat "$tmp/old.decls" "$tmp/new.decls" > "$tmp/decls"
   # What each file is, for the graph: tests, generated and config files keep
   # to themselves, since a spec mentions everything it tests and a codegen
   # dump mentions everything, and neither should pull a source symbol off
@@ -374,8 +406,14 @@ build() {
       grep -xF -f "$tmp/untracked.paths" "$tmp/paths" | while read -r p; do git diff --no-index -U0 /dev/null "$p"; done; } > "$tmp/hunks" 2>/dev/null
   fi
 
-  awk -F'\t' '
-    FILENAME == ARGV[1] { KIND[$1] = $2; next }
+  # Which language file reads each extension, so that a name is only looked
+  # for among definitions of the same language: a Python Opts is not a use of
+  # a Rust one.
+  extlang=$(for f in $langfiles; do for e in $(lang_field "$f" extensions); do printf '%s=%s ' "${e#.}" "${f##*/}"; done; done)
+  awk -F'\t' -v extlang="$extlang" '
+    BEGIN { nx = split(extlang, xs, " "); for (x = nx; x >= 1; x--) { split(xs[x], kv, "="); LANGOF[kv[1]] = kv[2] } }
+    # Each file keeps to its kind and its language: GROUP is both.
+    FILENAME == ARGV[1] { KIND[$1] = $2; e = $1; sub(/^.*[.]/, "", e); GROUP[$1] = $2 SUBSEP LANGOF[e]; next }
     # decls: side, path, rule, start, end, name, head, text
     FILENAME == ARGV[2] {
       side = $1; p = $2; r = $3
@@ -431,18 +469,47 @@ build() {
         }
       }
     }
+    # The reading order: roots first, then by file and line, and on a tie the
+    # one listed first. A merge sort, so the order costs n log n rather than
+    # the square of the change.
+    function ordless(a, b) {
+      if ((ROOT[a] + 0) != (ROOT[b] + 0)) return (ROOT[a] + 0) > (ROOT[b] + 0)
+      if (sortkey[a] != sortkey[b]) return sortkey[a] < sortkey[b]
+      return a < b
+    }
+    function ordsort(nn,   w, i, lo, mid, hi, a, b, k, srt) {
+      for (w = 1; w < nn; w *= 2) {
+        for (lo = 1; lo <= nn; lo += 2 * w) {
+          mid = lo + w; if (mid > nn + 1) mid = nn + 1
+          hi = mid + w; if (hi > nn + 1) hi = nn + 1
+          a = lo; b = mid; k = lo
+          while (a < mid && b < hi) { if (ordless(out[b], out[a])) srt[k++] = out[b++]; else srt[k++] = out[a++] }
+          while (a < mid) srt[k++] = out[a++]
+          while (b < hi) srt[k++] = out[b++]
+        }
+        for (i = 1; i <= nn; i++) out[i] = srt[i]
+      }
+    }
     function emit(r,   i, k) {
       i = rows[r]; k = key(i)
       print P[i], R[i], NM[i], PAR[i], EXP[r], CH[r], S[i], A[i], Z[i], OPEN[r], ADD[r], DEL[r], H[i], \
         ((k in old) ? A[old[k]] : ""), ((k in old) ? Z[old[k]] : ""), "", "", USES[r], ROOT[r] + 0, NEWU[r]
     }
     END {
-      # A member belongs to the class around it, on its side.
+      # A member (a method or a field) belongs to the definition around it on
+      # its side: a class, or a Rust struct, enum, trait or impl. Only the
+      # declarations of its own file on its own side can hold it, so FD lists
+      # them by file and the search is over those. Against every declaration
+      # in the change it was the square of the change, and the one thing that
+      # cost more than everything else put together.
+      for (i = 1; i <= n; i++) { PAR[i] = ""; k = S[i] SUBSEP P[i]; FD[k, ++FDN[k]] = i }
       for (i = 1; i <= n; i++) {
-        PAR[i] = ""
         if (R[i] != "method" && R[i] != "field") continue
-        for (j = 1; j <= n; j++)
-          if (R[j] == "class" && S[j] == S[i] && P[j] == P[i] && A[j] <= A[i] && Z[i] <= Z[j]) { PAR[i] = NM[j]; break }
+        k = S[i] SUBSEP P[i]
+        for (x = 1; x <= FDN[k]; x++) {
+          j = FD[k, x]
+          if (R[j] != "method" && R[j] != "field" && A[j] <= A[i] && Z[i] <= Z[j]) { PAR[i] = NM[j]; break }
+        }
         if (PAR[i] == "") R[i] = ""
       }
       # The comment block right above a declaration belongs to it: its doc,
@@ -513,18 +580,19 @@ build() {
       }
       # The changed definitions indexed by the name they are mentioned as, so
       # what one uses is a lookup rather than a pass against every other. Each
-      # kind of file keeps to itself, so the kind is part of the key.
+      # kind of file and each language keeps to itself, so GROUP is part of
+      # the key.
       for (r = 1; r <= m; r++) if (TOP[r]) {
         nm = BARE[rows[r]]
-        if (nm != "" && nm !~ /[^A-Za-z0-9_$]/) at_name[KIND[P[rows[r]]], nm] = at_name[KIND[P[rows[r]]], nm] " " r
+        if (nm != "" && nm !~ /[^A-Za-z0-9_$]/) at_name[GROUP[P[rows[r]]], nm] = at_name[GROUP[P[rows[r]]], nm] " " r
       }
       for (r = 1; r <= m; r++) if (TOP[r]) {
         sortkey[r] = P[rows[r]] sprintf("%08d", A[rows[r]]) S[rows[r]]
         mentions(T[rows[r]], cnt, first)
         nu = 0
         for (nm in cnt) {
-          if (!((KIND[P[rows[r]]], nm) in at_name)) continue
-          nq = split(at_name[KIND[P[rows[r]]], nm], qs, " ")
+          if (!((GROUP[P[rows[r]]], nm) in at_name)) continue
+          nq = split(at_name[GROUP[P[rows[r]]], nm], qs, " ")
           for (x = 1; x <= nq; x++) {
             q = qs[x] + 0
             if (q == r || ((q in inner) && inner[q] != r)) continue
@@ -568,14 +636,12 @@ build() {
         if (!pick) break
         ROOT[pick] = 1; stack[++sp] = pick
       }
-      # Roots first, by file and line, then the rest the same way.
+      # Roots first, by file and line, then the rest the same way. Sorted
+      # rather than picked smallest-first out of everything still unplaced,
+      # which was the square of the change.
       nout = 0
-      for (want = 1; want >= 0; want--) for (;;) {
-        pick = 0
-        for (r = 1; r <= m; r++) if (TOP[r] && !(r in placed) && (ROOT[r] + 0) == want && (!pick || sortkey[r] < sortkey[pick])) pick = r
-        if (!pick) break
-        out[++nout] = pick; placed[pick] = 1
-      }
+      for (r = 1; r <= m; r++) if (TOP[r]) out[++nout] = r
+      ordsort(nout)
       OFS = "\t"
       # What no symbol claims: an import, a top-level statement, a file with
       # no declarations at all. It gets a file row after the symbols, with
@@ -589,13 +655,16 @@ build() {
       }
       for (k in add) { split(k, kk, SUBSEP); if (kk[1] != "") continue; if (!(("new", kk[2], kk[3]) in inrow) && !(("", kk[2], "new", kk[3]) in blank)) { oadd[kk[2]]++; seenf[kk[2]] = 1 } }
       for (k in del) { split(k, kk, SUBSEP); if (kk[1] != "") continue; if (!(("old", kk[2], kk[3]) in inrow) && !(("", kk[2], "old", kk[3]) in blank)) { odel_[kk[2]]++; seenf[kk[2]] = 1 } }
+      # Each member under the definition it belongs to, looked up by that
+      # definition rather than found by reading every row again for each.
+      for (q = 1; q <= m; q++) if (!TOP[q]) { j = rows[q]; k = S[j] SUBSEP P[j] SUBSEP PAR[j]; KID[k, ++KIDN[k]] = q }
       for (o = 1; o <= nout; o++) {
         r = out[o]; i = rows[r]
         emit(r)
-        if (R[i] != "class") continue
-        # Its members, in line order.
-        nk = 0
-        for (q = 1; q <= m; q++) if (!TOP[q] && PAR[rows[q]] == NM[i] && P[rows[q]] == P[i] && S[rows[q]] == S[i]) kids[++nk] = q
+        # Its members, if it has any, in line order.
+        k = S[i] SUBSEP P[i] SUBSEP NM[i]
+        nk = KIDN[k] + 0
+        for (x = 1; x <= nk; x++) kids[x] = KID[k, x]
         for (x = 1; x <= nk; x++) for (y = x + 1; y <= nk; y++) if (A[rows[kids[y]]] < A[rows[kids[x]]]) { t = kids[x]; kids[x] = kids[y]; kids[y] = t }
         for (x = 1; x <= nk; x++) emit(kids[x])
       }

@@ -151,9 +151,41 @@ if [ -n "$chrome" ] && [ -x "$chrome" ]; then
   expect page/names-whole "$(grep -o '<text [^>]*>[^<]*</text>' "$tmp/dom.html" | grep -c '\u2026')" "0"
 fi
 
+# --- Rust and Python. The same model through another language file: a struct,
+# an impl named by what it implements, a doc comment and an attribute riding
+# with the fn under them, a decorator that is part of the interface, and a
+# name in a string or a comment that is not a use.
+rp=$tmp/rp
+mkdir "$rp" && cd "$rp" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'pub struct Opts {\n    pub a: u32,\n}\n\nimpl Opts {\n    pub fn new() -> Opts {\n        Opts { a: 1 }\n    }\n}\n\npub fn run(o: &Opts) -> u32 {\n    o.a\n}\n\nfn helper() -> u32 {\n    1\n}\n' > lib.rs
+printf 'from dataclasses import dataclass\n\n\n@dataclass\nclass Opts:\n    a: int = 1\n\n\ndef run(o: Opts) -> int:\n    return o.a\n\n\ndef _helper():\n    return 1\n' > app.py
+git add . && git commit -qm base
+printf 'pub struct Opts {\n    pub a: u32,\n    pub b: String,\n}\n\nimpl Opts {\n    pub fn new() -> Opts {\n        Opts { a: 1, b: String::new() }\n    }\n}\n\nimpl fmt::Display for Opts {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {\n        write!(f, "{}", self.a)\n    }\n}\n\npub fn run(o: &Opts, twice: bool) -> u32 {\n    o.a\n}\n\n/// Says "helper" in a string.\n#[inline]\npub fn fresh<%sa>(s: &%sa str) -> u32 {\n    run(&Opts::new(), true) // and helper in a comment\n}\n' "'" "'" > lib.rs
+printf 'from dataclasses import dataclass\n\n\n@dataclass(frozen=True)\nclass Opts:\n    a: int = 1\n    b: str = ""\n\n\ndef run(o: Opts, twice: bool) -> int:\n    return o.a\n\n\n# the new one\ndef fresh() -> Opts:\n    """Says _helper in a docstring."""\n    return run(Opts(), True)  # and _helper here\n' > app.py
+git commit -qam head
+seam HEAD > "$tmp/rp.tsv"
+rp() { awk -F'\t' -v f="$1" -v w="$2" '$1 == f && $3 == w { print $'"$3"' }' "$tmp/rp.tsv"; }
+expect rust/changes "$(awk -F'\t' '$1 == "lib.rs" && $2 != "file" { print $3 ":" $6 }' "$tmp/rp.tsv" | LC_ALL=C sort | tr '\n' ' ')" "Opts:body b:added fmt:added fresh:added helper:removed impl Opts:body impl fmt::Display for Opts:added new:body run:signature "
+expect rust/impl-member "$(rp lib.rs fmt 4)" "impl fmt::Display for Opts"
+expect rust/field-member "$(rp lib.rs b 4)" "Opts"
+expect rust/exported "$(rp lib.rs run 5) $(rp lib.rs helper 5)" "1 0"
+expect rust/doc-and-attr "$(rp lib.rs fresh 8) $(rp lib.rs fresh 10)" "22 24"
+# Opts::new names Opts; neither the string nor the comment names helper.
+expect rust/uses "$(rp lib.rs fresh 18)" "lib.rs#run|lib.rs#Opts"
+expect python/changes "$(awk -F'\t' '$1 == "app.py" && $2 != "file" { print $3 ":" $6 }' "$tmp/rp.tsv" | LC_ALL=C sort | tr '\n' ' ')" "Opts:signature _helper:removed b:added fresh:added run:signature "
+expect python/decorator-head "$(rp app.py Opts 13)" "@dataclass(frozen=True) class Opts:"
+expect python/exported "$(rp app.py run 5) $(rp app.py _helper 5)" "1 0"
+expect python/comment-start "$(rp app.py fresh 8)" "14"
+# -> Opts: is a use (a colon is not a key in Python); the docstring and the
+# comment are not. And the Python Opts is never the Rust one.
+expect python/uses "$(rp app.py fresh 18)" "app.py#Opts|app.py#run"
+expect python/facet "$(seam HEAD --json | jq -r '.edges[] | select(.from == "app.py#fresh") | .facet' | tr '\n' ' ')" "iface body "
+cd "$tmp" || exit 1
+
 # --- the language files
-expect lang/languages "$(seam --languages)" "$(printf 'typescript.yml\t.ts .tsx\ttypescript tsx')"
-expect lang/rules "$(seam --rules | grep -c '^language:')" "22"
+expect lang/languages "$(seam --languages)" "$(printf 'python.yml\t.py .pyi\tpython\nrust.yml\t.rs\trust\ntypescript.yml\t.ts .tsx\ttypescript tsx')"
+expect lang/rules "$(seam --rules | grep -c '^language:')" "41"
 expect lang/awk "$(seam --awk hunks | grep -c 'function shift')" "1"
 expect lang/share "$(test -f "$(seam --share)/decls.jq" && echo yes)" "yes"
 # A rule file in the repo replaces the one seam ships under that name: this one

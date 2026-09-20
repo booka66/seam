@@ -14,6 +14,10 @@
 #     compares the text before $B across the two sides of the change, and
 #     that is what "the interface changed, not only the body" means.
 #
+# A language whose comments and strings are not // /* */ ' " ` says so in a
+# #seam: noise line, and one where a name before : or ? is not a key in a
+# #seam: keys line; rust.yml and python.yml both do.
+#
 # "Top level" is said as "no ancestor but the program or an export statement",
 # a not-inside, rather than as inside-program. Both mean the same, but ast-grep
 # prints the text of every node a positive relational rule matched as a label,

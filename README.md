@@ -150,8 +150,18 @@ repo can replace what seam ships without forking it.
 saying which extensions the language uses and which grammars to write the rules
 against. Two things every rule must capture, because the rest of seam is built on
 them: `$N`, the name, which is how a mention of it is found, and `$B`, the body,
-so that everything before it is the interface. Adding a language is a data file
-and no code; see `share/languages/typescript.yml`.
+so that everything before it is the interface. A rule with no `$N` is named by
+its interface, which is how a Rust `impl Display for Foo` gets a name. A `method`
+or `field` is a member of whatever definition it sits inside.
+
+Two more `#seam:` lines say how to read the text for names. `noise` is a regex
+for what is not code (comments and strings), and `keys` is which of `:` and `?`
+make the name before them a key rather than a use (`:?` in TypeScript, `:` in
+Rust, none in Python). A language that says neither reads like TypeScript. A
+name is only looked for among definitions of its own language.
+
+Adding a language is a data file and no code; see `share/languages/`, where
+TypeScript, Rust and Python ship.
 
 **`references/<name>`** — not yet. Inside the change seam finds edges itself. The
 references that matter most come from outside it and from things seam should
@@ -193,23 +203,54 @@ statement).
 
 ## Speed
 
-It is shell over `git`, `ast-grep` and `jq`. A real change of 95 changed
-TypeScript files in a monorepo, 195 definitions, reads in **4.8s**; a synthetic
-one of 6400 definitions, which nobody can review, takes 18s.
+It is shell over `git`, `ast-grep` and `jq`. A change of 92 files, 145
+definitions, reads in **2.0s** and draws its page in 2.2s, where the two took
+4.6s and 5.2s. A synthetic one of 400 files and 8000 definitions, which nobody
+can review, takes 9s where it took 53s.
 
-Two things cost far more than they look:
+ast-grep's own parse is the cheap part, and it reads a directory in parallel.
+What costs is the jq that flattens its JSON and the awk that reads the two
+sides against the diff — and the way to make either slow is to put a loop over
+the whole change inside a loop over the whole change. Five of those have been
+found and taken out:
 
+- **Which definition mentions which.** It used to test every definition against
+  every other. It is now one pass over each definition's text against an index
+  of names.
+- **Which definition a member belongs to.** Every method and field was tried
+  against every declaration on both sides. Only the ones in its own file can
+  hold it, and that alone was nine tenths of the awk pass.
+- **The reading order.** Roots first and then the rest, each taken as the
+  smallest of everything still unplaced, which is the square of the change. It
+  is a merge sort now.
+- **The members of a definition.** Printing a class read the whole table again
+  looking for what sat under it; members are indexed by the definition they
+  belong to.
+- **The lines of a definition's diff** (`--html`). Every line of every changed
+  file was tried against every definition in the change rather than against the
+  ones in that file, which is what a page cost to draw.
+
+Two more that are not loops:
+
+- **jq held the whole parse before it read any of it.** ast-grep can hand its
+  matches over one a line (`--json=stream`) rather than as one array, and a
+  change of 8000 definitions then costs jq four megabytes instead of a gigabyte
+  and a half. Neither side needs the other, so both run at once. `share/decls.jq`
+  still takes an array, for a renderer that already feeds it one.
 - **One huge file.** ast-grep hands back the text of every declaration it
   matches, so a single 2MB generated registry in a change became 28MB of JSON
   for a regex to walk, and nine minutes. A file over `SEAM_MAX_BYTES` (256KB)
   is listed as a plain file instead, the way one seam has no language for is.
   Nobody reads a file that size by definition anyway.
-- **Comparing every pair.** Finding which definition mentions which used to test
-  every definition against every other, which is the square of the change. It is
-  now one pass over each definition's text against an index of names.
 
-What is left is ast-grep's JSON and the jq pass that flattens it, which is where
-the next win is if one is ever needed.
+What is left is the jq flatten, and in it `gsub`, which walks and rebuilds the
+string once a match. Squeezing the whitespace out of every declaration head was
+two thirds of it, and is now asked for only where there is whitespace to
+squeeze — but that rebuilding is the square of a head with a great many spaces
+in it, and a few heads are very large. Anything whose last block is its body
+puts everything before it in the interface, so a declaration configured by a
+long object literal can carry tens of kilobytes of "head"; those few are most of
+what is left, and where the next win is.
 
 ## What it wants
 
@@ -222,6 +263,12 @@ bin/seam-test
 ## Status
 
 Extracted from [otis](https://github.com/booka66/otis)'s symbol picker, which is the first
-thing to read a seam table and still the reason it exists. TypeScript and TSX
-today; the language contract has had one implementation, so expect the second one
-to find something wrong with it.
+thing to read a seam table and still the reason it exists. TypeScript and TSX,
+Rust and Python today. The second and third found what the first had baked in:
+comment and string syntax, what a colon means, members belonging only to a
+`class`, and names matching across languages.
+
+What they do not do yet: items inside an inline Rust `mod` are not listed (it is
+nearly always `mod tests`, which would pull everything it tests off the top
+level), so its lines count on the file row; and a struct or class gaining a field
+reads as a body change of the struct, with the field listed under it as added.

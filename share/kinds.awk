@@ -11,6 +11,7 @@ BEGIN { OFS = "\t" }
 { print $1, kindof($1) }
 function kindof(p) {
   if (p ~ /\.(spec|test)\.[a-zA-Z0-9]+$/ || p ~ /(^|\/)(tests?|__tests__|spec)\//) return "tests"
+  if (p ~ /(^|\/)(test_[^\/]*|[^\/]*_test|conftest)\.py$/) return "tests"
   if (generated(p)) return "gen"
   if (config(p)) return "cfg"
   return ""

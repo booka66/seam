@@ -6,6 +6,10 @@
 # seam <rev> --score --brief          the same in one line, for a footer
 # seam <rev> --score --table <file>   from a table already built, without
 #                                     reading the trees again
+# seam <rev> --split      how to split the change: one slice a story, and
+#                         which file goes where
+# seam <rev> --split --branch <name>  those slices as commits, in that order,
+#                                     on a new branch from the base
 # seam --languages        the languages it can read, and by which extensions
 # seam --rules            the ast-grep rules behind that, for a program that
 #                         wants to place something of its own in a declaration
@@ -109,10 +113,11 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score= brief= table= want=
+rev= json= html= score= brief= table= split= branch= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
+    branch) branch=$a split=1 want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
@@ -121,6 +126,8 @@ for a in "$@"; do
     --score) score=1 ;;
     --brief) brief=1 ;;
     --table) want=table ;;
+    --split) split=1 ;;
+    --branch) want=branch ;;
     --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
     *) rev=$a ;;
@@ -128,10 +135,11 @@ for a in "$@"; do
 done
 case $want in
   table) echo "seam: --table wants a file" >&2; exit 2 ;;
+  branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
   mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
-[ -n "$rev" ] || { sed -n '2,8p' "$0" | sed 's/^# //' >&2; exit 2; }
+[ -n "$rev" ] || { sed -n '2,11p' "$0" | sed 's/^# //' >&2; exit 2; }
 # base and head: the two trees. An end a range leaves out is HEAD, the way it
 # is for git itself, so main.. is main..HEAD; without that it read as an empty
 # head, which is how the worktree is said, and answered a different question
@@ -287,6 +295,127 @@ draw_score() {
     }
     $1 == "verdict" { printf "\n  %s%s %s%s\n\n", COL[$3 + 0], bar, $2, R; next }
   '
+}
+
+# The split, drawn: each slice numbered, named after its entry point, with its
+# size, then the files that go with it, and against a file anything a reader
+# should know: that another slice changed it too, or which file it is the test
+# of. Colour the way the score has it.
+draw_split() {
+  colour=0
+  [ -t 1 ] && colour=1
+  case ${SEAM_COLOR:-} in 1|yes|always) colour=1 ;; 0|no|never) colour=0 ;; esac
+  awk -F'\t' -v c="$colour" '
+    BEGIN { if (c) { R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; Y = "\033[33m" }; print "" }
+    $1 == "rev" { printf "  %sseam%s  %s%s%s\n", B, R, D, $2, R; next }
+    $1 == "totals" { printf "  %s%s%s\n", D, $2, R; next }
+    $1 == "slice" {
+      name = $4 ($5 != "" ? " " D "+" $5 R : "")
+      size = ($3 == "rest" ? "" : $6 " definition" ($6 == 1 ? "" : "s") " · ") $7 " file" ($7 == 1 ? "" : "s") " · " $8 " line" ($8 == 1 ? "" : "s")
+      printf "\n  %s%2d%s  %s%s%s  %s%s%s\n", B, $2, R, ($3 == "rest" ? D : B), name, R, D, size, R
+      if ($3 == "base") printf "      %swhat the other slices lean on, so it goes first%s\n", D, R
+      next
+    }
+    $1 == "file" {
+      note = $4 ($4 != "" && $5 != "" ? ", " : "") $5
+      printf "      %s%s%s%s\n", $3, (note != "" ? "  " : ""), ($4 != "" ? Y : D), (note != "" ? note R : "")
+      next
+    }
+    END { printf "\n  %s--branch <name> writes these as commits, in this order, on a new branch from the base.%s\n\n", D, R }
+  '
+}
+
+# --branch: the slices as commits, in the order the plan has them, on a new
+# branch from the base. Nothing is checked out and the worktree is not touched:
+# each commit is built in an index of its own, from the base tree, a slice at
+# a time. A file one slice has goes in whole, from the head. A file two slices
+# share is rebuilt for each slice short of its last from the diff of the whole
+# file, keeping a line when the definition it falls in has been reached, and
+# at its last slice it is the head's file exactly. The last commit is checked
+# against the head tree, so a slice that did not add up cannot pass quietly.
+stack() {
+  [ -n "$head" ] || { echo "seam: --branch wants two commits, not the worktree" >&2; exit 2; }
+  git show-ref --verify -q "refs/heads/$branch" && { printf 'seam: %s is already a branch\n' "$branch" >&2; exit 2; }
+  jq --arg fmt json -f "$share/split.jq" < "$tmp/graph.json" > "$tmp/plan.json"
+  n=$(jq '.slices | length' "$tmp/plan.json")
+  [ "$n" -gt 1 ] || { echo "seam: one slice, which is the change as it is; nothing to split" >&2; exit 1; }
+  headc=$(git rev-parse "$head^{commit}")
+  parent=$(git rev-parse -q --verify "$base^{commit}" 2>/dev/null) || parent=
+  # A shared file: which slice each definition's lines go to, the slice the
+  # unclaimed lines go to (no id), and the last slice that touches it.
+  jq -r '.shared[] | .path as $p | (.definitions | to_entries[] | [$p, .key, .value] | @tsv), ([$p, "", .rest] | @tsv)' "$tmp/plan.json" > "$tmp/owners"
+  jq -r '.shared[] | [.path, ([.rest] + [.definitions[]] | max)] | @tsv' "$tmp/plan.json" > "$tmp/last"
+  zeros=0000000000000000000000000000000000000000
+  export GIT_INDEX_FILE="$tmp/index"
+  git read-tree "$base" || exit 1
+  k=1
+  while [ "$k" -le "$n" ]; do
+    # Whole from the head: this slice's own files, and any shared file this
+    # slice is the last to touch.
+    { jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .files[] | select((.shared | length) == 0) | .path' "$tmp/plan.json"
+      awk -F'\t' -v k="$k" '$2 == k { print $1 }' "$tmp/last"; } > "$tmp/whole"
+    : > "$tmp/entries"
+    if [ -s "$tmp/whole" ]; then
+      tr '\n' '\0' < "$tmp/whole" | xargs -0 git ls-tree -z "$head" -- > "$tmp/entries"
+      tr '\0' '\n' < "$tmp/entries" | cut -f2- | grep -vxF -f - "$tmp/whole" |
+        while read -r p; do printf '0 %s\t%s\0' "$zeros" "$p"; done >> "$tmp/entries"
+    fi
+    # Shared files still short of their last slice: rebuilt for this one.
+    awk -F'\t' -v k="$k" '$2 > k { print $1 }' "$tmp/last" | while read -r p; do
+      mode=$(git ls-tree "$head" -- "$p" | cut -d' ' -f1)
+      git diff -U999999 --no-renames "$base" "$head" -- "$p" > "$tmp/full"
+      sha=$(awk -F'\t' -v k="$k" -v p="$p" '
+        FILENAME == ARGV[1] { if ($1 == p) { if ($2 == "") rest = $3 + 0; else own[$2] = $3 + 0 }; next }
+        FILENAME == ARGV[2] {
+          if ($1 == p && $2 != "file" && $8 != "") {
+            id = $1 "#" ($4 == "" ? $3 : $4 "." $3)
+            n++; S[n] = (id in own) ? own[id] : rest
+            if ($7 == "new") { NA[n] = $8 + 0; NZ[n] = $9 + 0; if ($14 != "") { OA[n] = $14 + 0; OZ[n] = $15 + 0 } }
+            else { OA[n] = $8 + 0; OZ[n] = $9 + 0 }
+          }
+          next
+        }
+        !body { if (/^@@/) { body = 1; split($0, w, " "); split(w[2], a, ","); o = substr(a[1], 2) + 0; split(w[3], b, ","); nn = substr(b[1], 2) + 0 }; next }
+        {
+          c = substr($0, 1, 1); t = substr($0, 2)
+          if (c == "\\") { if (kept) nonl[m] = 1; next }
+          kept = 0
+          if (c == "-") { if (owner("old", o) > k) emit(t); o++ }
+          else if (c == "+") { if (owner("new", nn) <= k) emit(t); nn++ }
+          else { emit(t); o++; nn++ }
+        }
+        function owner(side, l,   x) {
+          for (x = 1; x <= n; x++) {
+            if (side == "new" && NA[x] && l >= NA[x] && l <= NZ[x]) return S[x]
+            if (side == "old" && OA[x] && l >= OA[x] && l <= OZ[x]) return S[x]
+          }
+          return rest
+        }
+        function emit(t) { out[++m] = t; kept = 1 }
+        END { for (i = 1; i <= m; i++) printf "%s%s", out[i], (i < m || !nonl[i]) ? "\n" : "" }
+      ' "$tmp/owners" "$out" "$tmp/full" | git hash-object -w --stdin) || exit 1
+      printf '%s %s\t%s\0' "${mode:-100644}" "$sha" "$p" >> "$tmp/entries"
+    done
+    git update-index -z --index-info < "$tmp/entries" || exit 1
+    tree=$(git write-tree) || exit 1
+    commit=$(jq -r --argjson k "$k" --argjson n "$n" --arg rev "$rev" '.slices[] | select(.n == $k)
+      | .name + (if (.roots | length) > 1 then " and " + ((.roots | length) - 1 | tostring) + " more" else "" end),
+        "", "Slice \($k) of \($n) of \($rev), cut by seam --split.",
+        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end),
+        "", (.files[] | "  " + .path + (if (.shared | length) > 0 then " (part)" else "" end))' "$tmp/plan.json" |
+      git commit-tree "$tree" ${parent:+-p "$parent"}) || exit 1
+    printf '  %s  %s  %s\n' "$k" "$(git rev-parse --short "$commit")" "$(git log -1 --format=%s "$commit")"
+    parent=$commit
+    k=$((k + 1))
+  done
+  unset GIT_INDEX_FILE
+  git update-ref "refs/heads/$branch" "$parent" || exit 1
+  if git diff-tree --quiet "$parent" "$headc"; then
+    printf '%s: %s commits from %s, ending at the tree %s has.\n' "$branch" "$n" "$base" "$head"
+  else
+    printf 'seam: %s does not end at the tree %s has. This is a bug in the split; git diff %s %s shows what is off.\n' "$branch" "$head" "$branch" "$head" >&2
+    exit 1
+  fi
 }
 
 # --html: the graph inside share/view.html, which is the one page seam ships:
@@ -740,6 +869,11 @@ if [ -n "$html" ]; then
   else
     page "$out"
   fi
+elif [ -n "$split" ]; then
+  graph "$out" > "$tmp/graph.json"
+  if [ -n "$branch" ]; then stack
+  elif [ -n "$json" ]; then jq --arg fmt json -f "$share/split.jq" < "$tmp/graph.json"
+  else jq -r --arg fmt "" -f "$share/split.jq" < "$tmp/graph.json" | draw_split; fi
 elif [ -n "$score" ]; then
   if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 --arg fmt "" -f "$share/score.jq"
   else graph "$out" | jq -r --arg brief "" --arg fmt "" -f "$share/score.jq" | draw_score; fi

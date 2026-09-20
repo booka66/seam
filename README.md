@@ -14,6 +14,8 @@ seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
+seam main...     --split    how to split it: one slice a story, each file placed
+seam main...     --split --branch cut   those slices as commits on a new branch
 seam worktree               what is changed against HEAD, staged or not
 seam --mr 1234              a GitLab merge request (or its URL), via glab
 ```
@@ -142,6 +144,70 @@ why it is worth counting:
 
 The thresholds are what a reviewer can carry, not measurements of anything, and
 they sit at the top of `share/score.jq` to be argued with.
+
+## Splitting a branch
+
+`--split` is the score's *split the PR* line taken seriously: not how many
+stories there are but which definition and which file goes in which one, and
+`--branch <name>` lays them down as commits.
+
+```
+  seam  main...
+  60 definitions · 93 edges · 92 files → 8 slices
+
+   1  Mode  7 definitions · 5 files · 67 lines
+      what the other slices lean on, so it goes first
+      hub.ts
+      ...
+
+   2  fa1 +3  27 definitions · 16 files · 584 lines
+      a.spec.ts  with a.ts
+      a.ts
+      shared.ts  shared with 3
+      ...
+
+   8  the rest  62 files · 219 lines
+      ...
+```
+
+A **story** is a connected piece of the graph: definitions that mention each
+other, with nothing changed outside them mentioning them and nothing in them
+mentioning anything changed outside. Cut between two stories and nothing
+crosses the cut, so each slice reads on its own, and since each is closed under
+what it mentions, none needs another to build. That is only as good as seam's
+edges: a mention it did not find (an alias, a string, a route table) is a
+dependency it did not see, and a branch built by `--branch` is worth building
+before it is worth pushing.
+
+A branch that reads as one blob usually is not one. It is a type, an enum or a
+schema that every part mentions holding the rest together, and the score's
+*15 stories* are fifteen entry points into one piece. So when a piece has six
+or more definitions, seam looks for the one whose removal breaks it into the
+most stories, and takes it, with everything it mentions in turn, into a first
+slice the others lean on. That is what a person does by hand: the type in one
+commit, then each thing that uses it. It cuts again while a cut still helps,
+never taking more than half a piece.
+
+Then files. A member goes with its class. A definition on its own is not a
+story, and neither is a story made of tests, so those go by file: a file whose
+definitions all belong to one slice goes with it whole, a test goes with the
+file it is named after (`foo.spec.ts` with `foo.ts`, `test_foo.py` with
+`foo.py`) when that file is one slice's, and what nothing claims is **the
+rest**, last. A file two slices both changed is **shared**: it is split by
+line, each definition's lines going with its slice and the lines no definition
+claims (an import, a top-level statement) with the first slice in it, which is
+the one most likely to want the import. The plan says so against the file, so
+it can be argued with before anything is written.
+
+`--branch <name>` makes one commit a slice, in that order, on a new branch
+from the base. Nothing is checked out and the worktree is not touched: each
+commit is built in an index of its own, a whole file from the head, a shared
+file rebuilt from the diff for every slice short of its last. The last commit
+is checked against the head's tree, so a slice that did not add up cannot pass
+quietly. Commit messages are the entry point's name with the slice's
+definitions and files under it, to be rewritten. `--split --json` is the plan
+as data, with the line owners of every shared file, for a picker that wants to
+stage one slice rather than commit it.
 
 ## Extending it
 

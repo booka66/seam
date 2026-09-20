@@ -183,6 +183,60 @@ expect python/uses "$(rp app.py fresh 18)" "app.py#Opts|app.py#run"
 expect python/facet "$(seam HEAD --json | jq -r '.edges[] | select(.from == "app.py#fresh") | .facet' | tr '\n' ' ')" "iface body "
 cd "$tmp" || exit 1
 
+# --- the split. A hub two stories both mention, so it goes first; the two
+# stories, one file shared between them and split by line; a test placed by
+# its name; and a loose definition and a file seam cannot read, which are the
+# rest. Then the same as commits, which have to add up to the head.
+sp=$tmp/sp
+mkdir "$sp" && cd "$sp" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export type Mode = "a" | "b";\n' > hub.ts
+printf 'import { Mode } from "./hub";\nimport { sa } from "./shared";\nexport function fa1(m: Mode): number {\n  return fa2() + sa();\n}\nexport function fa2(): number {\n  return 1;\n}\n' > a.ts
+printf 'import { Mode } from "./hub";\nimport { sb } from "./shared";\nexport function fb1(m: Mode): number {\n  return fb2() + sb();\n}\nexport function fb2(): number {\n  return 2;\n}\n' > b.ts
+printf 'export function sa(): number {\n  return 10;\n}\nexport function sb(): number {\n  return 20;\n}\n' > shared.ts
+printf 'export function lonely(): number {\n  return 0;\n}\n' > c.ts
+printf 'import { fa1 } from "./a";\nconsole.log(fa1("a"));\n' > a.spec.ts
+printf 'notes\n' > notes.md
+git add . && git commit -qm base && spbase=$(git rev-parse HEAD)
+printf 'export type Mode = "a" | "b" | "c";\n' > hub.ts
+printf 'import { Mode } from "./hub";\nimport { sa } from "./shared";\nexport function fa1(m: Mode): number {\n  const x = fa2();\n  const y = sa();\n  const z = x + y;\n  return z * 2;\n}\nexport function fa2(): number {\n  return 11;\n}\n' > a.ts
+printf 'import { Mode } from "./hub";\nimport { sb } from "./shared";\nexport function fb1(m: Mode): number {\n  return fb2() * sb();\n}\nexport function fb2(): number {\n  return 22;\n}\n' > b.ts
+printf 'import { Mode } from "./hub";\n\nexport function sa(): number {\n  return 100;\n}\nexport function sb(): number {\n  return 200;\n}\n' > shared.ts
+printf 'export function lonely(): number {\n  return 1;\n}\n' > c.ts
+printf 'import { fa1 } from "./a";\nconsole.log(fa1("c"));\n' > a.spec.ts
+printf 'notes\nmore\n' > notes.md
+git add . && git commit -qm head && sphead=$(git rev-parse HEAD)
+pl=$tmp/plan.json
+seam "$spbase..$sphead" --split --json > "$pl"
+expect split/slices "$(jq -r '[.slices[] | .kind] | join(" ")' "$pl")" "base story story rest"
+expect split/hub "$(jq -r '.slices[0] | .roots[0] + " " + (.definitions | join(" "))' "$pl")" "Mode hub.ts#Mode"
+expect split/story-a "$(jq -r '.slices[1] | .name + ": " + (.definitions | sort | join(" "))' "$pl")" "fa1: a.ts#fa1 a.ts#fa2 shared.ts#sa"
+expect split/story-b "$(jq -r '.slices[2] | .name + ": " + (.definitions | sort | join(" "))' "$pl")" "fb1: b.ts#fb1 b.ts#fb2 shared.ts#sb"
+expect split/shared "$(jq -r '.slices[1].files[] | select(.path == "shared.ts") | .shared | join(",")' "$pl")" "3"
+expect split/test-by-name "$(jq -r '.slices[1].files[] | select(.path == "a.spec.ts") | .via' "$pl")" "a.ts"
+expect split/rest "$(jq -r '.slices[3] | (.files | map(.path) | join(" ")) + ": " + (.definitions | join(" "))' "$pl")" "c.ts notes.md: c.ts#lonely"
+expect split/line-owners "$(jq -r '.shared[0] | .path + " " + (.rest | tostring) + " " + (.definitions | to_entries | sort_by(.key) | map(.key + "=" + (.value | tostring)) | join(" "))' "$pl")" "shared.ts 2 shared.ts#sa=2 shared.ts#sb=3"
+sd=$tmp/split.txt
+SEAM_COLOR=0 seam "$spbase..$sphead" --split > "$sd"
+expect split/drawn "$(awk '/^ +[0-9]+  [^ ]/ { print $1, $2 }' "$sd" | tr '\n' ' ')" "1 Mode 2 fa1 3 fb1 4 the "
+expect split/drawn-shared "$(grep -c 'shared.ts  shared with 3' "$sd")" "1"
+expect split/drawn-via "$(grep -c 'a.spec.ts  with a.ts' "$sd")" "1"
+# The commits. Nothing checked out, one commit a slice, and the last tree is
+# the head's. The shared file in story A has A's lines and not B's, and the
+# import nothing claims went with the first slice in the file.
+expect split/branch "$(seam "$spbase..$sphead" --split --branch cut 2>&1 | tail -1)" "cut: 4 commits from $spbase, ending at the tree $sphead has."
+expect split/branch-count "$(git rev-list --count "$spbase..cut")" "4"
+expect split/branch-not-checked-out "$(git rev-parse --abbrev-ref HEAD)" "$(git rev-parse --abbrev-ref HEAD | grep -v '^cut$' | head -1)"
+expect split/branch-tree "$(git diff --stat cut "$sphead" | wc -l | tr -d ' ')" "0"
+expect split/branch-base "$(git show --stat --format= cut~3 | awk '/\|/ { print $1 }' | tr '\n' ' ')" "hub.ts "
+expect split/branch-story-a "$(git show --stat --format= cut~2 | awk '/\|/ { print $1 }' | tr '\n' ' ')" "a.spec.ts a.ts shared.ts "
+expect split/branch-shared-half "$(git show cut~2:shared.ts | tr '\n' ' ')" 'import { Mode } from "./hub";  export function sa(): number {   return 100; } export function sb(): number {   return 20; } '
+expect split/branch-shared-whole "$(git show cut~1:shared.ts | cmp -s - shared.ts && echo same)" "same"
+expect split/branch-subject "$(git log -1 --format=%s cut~2)" "fa1"
+expect split/branch-exists "$(seam "$spbase..$sphead" --split --branch cut 2>&1; echo "rc=$?")" "$(printf 'seam: cut is already a branch\nrc=2')"
+expect split/branch-no-worktree "$(seam worktree --branch x 2>&1; echo "rc=$?")" "$(printf 'seam: --branch wants two commits, not the worktree\nrc=2')"
+cd "$tmp" || exit 1
+
 # --- the language files
 expect lang/languages "$(seam --languages)" "$(printf 'python.yml\t.py .pyi\tpython\nrust.yml\t.rs\trust\ntypescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "41"

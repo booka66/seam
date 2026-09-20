@@ -36,6 +36,14 @@
 # leave at least two stories behind while taking no more than half the piece.
 def big: 6;
 
+# A slice with no definition in it has no name to take, so it is named after
+# what it carries: a commit subject reading "the rest" tells a reviewer
+# nothing, and two file names tell them what it is.
+def byfiles:
+  (map(sub("^.*/"; ""))) as $n
+  | if ($n | length) == 0 then "nothing"
+    elif ($n | length) <= 2 then ($n | join(" and "))
+    else $n[0] + " and " + (($n | length) - 1 | tostring) + " more" end;
 def canon: if .class == null then .id else .path + "#" + .class end;
 def lines: ((.added // 0) + (.removed // 0));
 # Connected pieces of $nodes under $edges ([from, to] pairs): each node starts
@@ -140,7 +148,7 @@ def tested:
         lines: ($size[$s.n | tostring] // 0)}]
    + ([$placed[] | select(.n == $restn)] as $rest
       | if ($rest | length) == 0 then [] else
-        [{n: $restn, kind: "rest", name: "the rest", roots: [],
+        [{n: $restn, kind: "rest", name: ($rest | map(.path) | byfiles), roots: [],
           definitions: [$D[] | select($where[.path].n == $restn) | .id],
           files: ($rest | map({path, shared, via})),
           lines: ($size[$restn | tostring] // 0)}] end)) as $slices
@@ -162,12 +170,16 @@ def tested:
 | ([$g.files[] | select($pull[.path])]) as $lifted
 | (if ($lifted | length) == 0 then {slices: $slices, shared: $shared} else
      (reduce $lifted[] as $f ({}; .[$where[$f.path].n | tostring] += ($f | lines))) as $minus
-     | ([{old: 0, kind: "first", name: "what the code waits on", roots: [], definitions: [],
+     | ([{old: 0, kind: "first", name: ([$lifted[].path] | byfiles), roots: [], definitions: [],
           files: [$slices[] | .files[] | select($pull[.path])],
           lines: ([$lifted[] | lines] | add // 0)}]
         + [$slices[] | . as $s
-           | {old: $s.n, kind: $s.kind, name: $s.name, roots: $s.roots, definitions: $s.definitions,
-              files: [$s.files[] | select($pull[.path] | not)],
+           | ([$s.files[] | select($pull[.path] | not)]) as $left
+           # A slice named after its files is renamed when some of them have
+           # been lifted out from under it, or it goes on naming what it no
+           # longer carries.
+           | {old: $s.n, kind: $s.kind, roots: $s.roots, definitions: $s.definitions, files: $left,
+              name: (if ($s.definitions | length) == 0 then ($left | map(.path) | byfiles) else $s.name end),
               lines: ($s.lines - ($minus[$s.n | tostring] // 0))}]
         | map(select((.definitions | length) > 0 or (.files | length) > 0))) as $kept
      | ($kept | to_entries | map({key: (.value.old | tostring), value: (.key + 1)}) | from_entries) as $renum

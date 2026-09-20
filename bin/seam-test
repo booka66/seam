@@ -218,7 +218,10 @@ expect split/rest "$(jq -r '.slices[3] | (.files | map(.path) | join(" ")) + ": 
 expect split/line-owners "$(jq -r '.shared[0] | .path + " " + (.rest | tostring) + " " + (.definitions | to_entries | sort_by(.key) | map(.key + "=" + (.value | tostring)) | join(" "))' "$pl")" "shared.ts 2 shared.ts#sa=2 shared.ts#sb=3"
 sd=$tmp/split.txt
 SEAM_COLOR=0 seam "$spbase..$sphead" --split > "$sd"
-expect split/drawn "$(awk '/^ +[0-9]+  [^ ]/ { print $1, $2 }' "$sd" | tr '\n' ' ')" "1 Mode 2 fa1 3 fb1 4 the "
+expect split/drawn "$(awk '/^ +[0-9]+  [^ ]/ { print $1, $2 }' "$sd" | tr '\n' ' ')" "1 Mode 2 fa1 3 fb1 4 c.ts "
+# A slice with no definition to be named after is named for what it carries:
+# "the rest" in a git log tells a reviewer nothing.
+expect split/rest-named-by-file "$(seam "$spbase..$sphead" --split --json | jq -r '.slices[-1].name')" "c.ts and notes.md"
 expect split/drawn-shared "$(grep -c 'shared.ts  shared with 3' "$sd")" "1"
 expect split/drawn-via "$(grep -c 'a.spec.ts  with a.ts' "$sd")" "1"
 # The commits. Nothing checked out, one commit a slice, and the last tree is

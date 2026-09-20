@@ -322,6 +322,8 @@ draw_split() {
       size = ($3 == "rest" ? "" : $6 " definition" ($6 == 1 ? "" : "s") " · ") $7 " file" ($7 == 1 ? "" : "s") " · " $8 " line" ($8 == 1 ? "" : "s")
       printf "\n  %s%2d%s  %s%s%s  %s%s%s\n", B, $2, R, ($3 == "rest" ? D : B), name, R, D, size, R
       if ($3 == "base") printf "      %swhat the other slices lean on, so it goes first%s\n", D, R
+      if ($3 == "first") printf "      %swhat the code waits on, and seam has no language to see, so it goes first%s\n", D, R
+      if ($3 == "rest") printf "      %sloose definitions, files seam read nothing from, tests nothing claimed%s\n", D, R
       next
     }
     $1 == "file" {
@@ -510,11 +512,10 @@ stack() {
     done
     git update-index -z --index-info < "$tmp/entries" || exit 1
     tree=$(git write-tree) || exit 1
-    commit=$(jq -r --argjson k "$k" --argjson n "$n" --arg rev "$rev" '.slices[] | select(.n == $k)
+    commit=$(jq -r --argjson k "$k" --argjson n "$n" '.slices[] | select(.n == $k)
       | .name + (if (.roots | length) > 1 then " and " + ((.roots | length) - 1 | tostring) + " more" else "" end),
-        "", "Slice \($k) of \($n) of \($rev), cut by seam --split.",
-        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end),
-        "", (.files[] | "  " + .path + (if (.shared | length) > 0 then " (part)" else "" end))' "$tmp/plan.json" |
+        "", "Slice \($k) of \($n), cut by seam --split.",
+        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end)' "$tmp/plan.json" |
       git commit-tree "$tree" ${parent:+-p "$parent"}) || exit 1
     printf '  %s  %s  %s\n' "$k" "$(git rev-parse --short "$commit")" "$(git log -1 --format=%s "$commit")"
     parent=$commit

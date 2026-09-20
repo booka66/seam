@@ -22,6 +22,14 @@ fi
 
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
+# seam reads a repo's ./.seam, then this user's, then what it ships, and the
+# tests want only the last two: a language file or a reference provider of
+# your own would otherwise fail tests that have nothing to do with it, which
+# is a confusing way to learn that it works. The fixtures make their own
+# ./.seam where they mean to.
+XDG_CONFIG_HOME=$tmp/noconfig
+export XDG_CONFIG_HOME
+mkdir -p "$XDG_CONFIG_HOME"
 cd "$tmp" || exit 1
 git init -q .; git config user.email t@t; git config user.name t
 

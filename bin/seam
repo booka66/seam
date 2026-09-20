@@ -13,6 +13,8 @@
 # seam <rev> --split --first <glob>   those paths in a slice before every
 #                                     other, for what the code waits on and
 #                                     seam has no language to see
+# seam <rev> --split --plan-out <file>  the plan as json, rewritten there
+#                                     whenever a check sends seam back to it
 # seam <rev> --split --branch <n> --check '<cmd>'
 #                                     run <cmd> on every commit as it is made,
 #                                     in a worktree of its own, and write the
@@ -120,13 +122,14 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score= brief= table= split= branch= firstglobs= check= want=
+rev= json= html= score= brief= table= split= branch= firstglobs= check= planout= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
     branch) branch=$a split=1 want=; continue ;;
     first) firstglobs="$firstglobs $a" want=; continue ;;
     check) check=$a split=1 want=; continue ;;
+    planout) planout=$a split=1 want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
@@ -138,6 +141,7 @@ for a in "$@"; do
     --split) split=1 ;;
     --first) want=first ;;
     --check) want=check ;;
+    --plan-out) want=planout ;;
     --branch) want=branch ;;
     --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
@@ -149,6 +153,7 @@ case $want in
   branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
   first) echo "seam: --first wants a path pattern" >&2; exit 2 ;;
   check) echo "seam: --check wants a command" >&2; exit 2 ;;
+  planout) echo "seam: --plan-out wants a file" >&2; exit 2 ;;
   mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
@@ -513,6 +518,10 @@ stack() {
   [ -n "$head" ] || { echo "seam: --branch wants two commits, not the worktree" >&2; exit 2; }
   git show-ref --verify -q "refs/heads/$branch" && { printf 'seam: %s is already a branch\n' "$branch" >&2; exit 2; }
   plan json > "$tmp/plan.json"
+  # A caller drawing the plan needs to see it change: a fuse rewrites it, and
+  # a screen still showing the one it started with is showing nine slices that
+  # are now three.
+  [ -z "$planout" ] || cp "$tmp/plan.json" "$planout"
   n=$(jq '.slices | length' "$tmp/plan.json")
   [ "$n" -gt 1 ] || { echo "seam: one slice, which is the change as it is; nothing to split" >&2; exit 1; }
   hazards > "$tmp/hazards"
@@ -683,6 +692,7 @@ stack() {
           jq --argjson fuse "$(printf '%s %s' "$k" "$(cat "$tmp/blame")" | jq -R 'split(" ") | map(select(length > 0) | tonumber)')" \
             -f "$share/merge.jq" < "$tmp/plan.json" > "$tmp/plan.new" && mv "$tmp/plan.new" "$tmp/plan.json" || exit 1
           n=$(jq '.slices | length' "$tmp/plan.json")
+          [ -z "$planout" ] || cp "$tmp/plan.json" "$planout"
           verified=$((k - 1)); fused=$((fused + 1)); again=1
           break
         fi

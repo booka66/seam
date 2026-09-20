@@ -631,10 +631,22 @@ stack() {
         else
           printf 'seam: it said nothing, and exited %s.\n' "$ok" >&2
         fi
-        # 127 is the shell saying it never found the command. That is not the
-        # slice's fault and no advice about splitting applies to it.
+        # Which slices the check named files from. A check that fails says
+        # where it failed, and every path it mentions that this change also
+        # touches belongs to a slice: those are the ones this one is waiting
+        # for, and naming them is the difference between "it did not work"
+        # and "put these together".
+        jq -r '.slices[] | .n as $n | .files[] | [.path, ($n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/whose"
+        awk -F'\t' -v me="$k" '
+          FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
+          { for (p in at) if (at[p] != me && index($0, p)) hit[at[p]] = 1 }
+          END { n = 0; for (x in hit) { n++; list = list (list == "" ? "" : ", ") x }
+                if (n) print (n == 1 ? "slice " : "slices ") list }
+        ' "$tmp/whose" "$tmp/check.out" > "$tmp/blame"
         if [ "$ok" -eq 127 ]; then
           printf 'seam: that is the check not running, rather than the slice failing. It runs under /bin/sh, so a command your interactive shell finds by way of a version manager or a function is not always there; give it a path, or a shell that loads what it needs.\n' >&2
+        elif [ -s "$tmp/blame" ]; then
+          printf 'seam: it named files that %s has. This change does not come apart there: those slices belong in one commit with this, or something they share does.\n' "$(cat "$tmp/blame")" >&2
         else
           printf 'seam: that slice needs what a later one has. Put it with the slice that completes it, or say what it waits on in .seam/first.\n' >&2
         fi

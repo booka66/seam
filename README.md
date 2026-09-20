@@ -151,8 +151,16 @@ they sit at the top of `share/score.jq` to be argued with.
 stories there are but which definition and which file goes in which one, and
 `--branch <name>` lays them down as commits.
 
-`--check '<cmd>'` runs a command on every commit as it is made, in a worktree
-of that commit alone, and writes the branch only if every one of them passes.
+`--check '<cmd>'` runs a command on every commit as it is made and writes the
+branch only if every one of them passes — and when one does not, it fuses that
+slice with the slices it was waiting for and builds the whole thing again, up
+to six times. The check is the only thing here that knows whether a stack
+stands up, so it is the thing allowed to correct the plan: seam's edges are
+names it found inside changed definitions, and a type that ripples through
+files which never name it is exactly what it cannot see. What a fuse breaks
+the next pass catches, and a fuse only ever makes the stack shorter, so it
+ends. A change that ends up one commit was one commit, and that is an answer
+nobody had before — a proved one.
 Without it only the last commit is checked, against the head tree, so a stack
 whose middle did not build looked exactly like one that did. The command is
 told which slice it is on (`SEAM_SLICE`, `SEAM_SLICES`, `SEAM_COMMIT`), and

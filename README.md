@@ -156,8 +156,13 @@ of that commit alone, and writes the branch only if every one of them passes.
 Without it only the last commit is checked, against the head tree, so a stack
 whose middle did not build looked exactly like one that did. The command is
 told which slice it is on (`SEAM_SLICE`, `SEAM_SLICES`, `SEAM_COMMIT`), and
-what it needs to run there — a link to `node_modules`, a warm cache — is its
-own business.
+where the two ends and the original worktree are (`SEAM_BASE`, `SEAM_HEAD`,
+`SEAM_ROOT`). One worktree serves the whole stack and moves from commit to
+commit, so an install done for the first slice is still there for the second;
+what a check needs before it can run is its own business. A check that would
+rather not stand in a worktree at all — asking a language server what the tree
+at that commit would say, from where the dependencies already are — has
+`SEAM_ROOT` and `SEAM_COMMIT` and needs nothing else.
 
 A **sweep** is three files or more whose changed lines are the same text: a
 rename, a lint fix, an import that moved. Their files have no definitions seam

@@ -505,6 +505,7 @@ plan() {
 # at its last slice it is the head's file exactly. The last commit is checked
 # against the head tree, so a slice that did not add up cannot pass quietly.
 stack() {
+  seamroot=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
   [ -n "$head" ] || { echo "seam: --branch wants two commits, not the worktree" >&2; exit 2; }
   git show-ref --verify -q "refs/heads/$branch" && { printf 'seam: %s is already a branch\n' "$branch" >&2; exit 2; }
   plan json > "$tmp/plan.json"
@@ -599,14 +600,24 @@ stack() {
     # told which slice it is on.
     if [ -n "$check" ]; then
       printf '  %s  %s  %s ... ' "$k" "$short" "$subject"
-      rm -rf "$tmp/wt"
-      if ! git worktree add --detach -q "$tmp/wt" "$commit" 2>"$tmp/check.out"; then
-        echo; echo "seam: could not make a worktree to check slice $k in:" >&2
+      # One worktree for the whole stack, moved from commit to commit, rather
+      # than one a commit. A worktree of a monorepo is ten seconds and a
+      # gigabyte before anything is installed in it, and whatever a check
+      # needs before it can run costs more than the check does; git does not
+      # touch what it does not track, so an install done for slice one is
+      # still there for slice two. SEAM_ROOT is the worktree seam was run
+      # from, for a check that would rather read the commit than stand in it.
+      if [ ! -d "$tmp/wt" ]; then
+        if ! git worktree add --detach -q "$tmp/wt" "$commit" 2>"$tmp/check.out"; then
+          echo; echo "seam: could not make a worktree to check in:" >&2
+          sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
+        fi
+      elif ! git -C "$tmp/wt" checkout --detach -q "$commit" 2>"$tmp/check.out"; then
+        echo; echo "seam: could not move the check's worktree to slice $k:" >&2
         sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
       fi
-      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit eval "$check" ) > "$tmp/check.out" 2>&1
+      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit SEAM_ROOT=$seamroot SEAM_BASE=$base SEAM_HEAD=$head eval "$check" ) > "$tmp/check.out" 2>&1
       ok=$?
-      git worktree remove --force "$tmp/wt" 2>/dev/null
       if [ "$ok" -ne 0 ]; then
         echo "no"
         printf 'seam: slice %s of %s does not pass the check, so %s is not written.\n' "$k" "$n" "$branch" >&2
@@ -616,7 +627,13 @@ stack() {
         else
           printf 'seam: it said nothing, and exited %s.\n' "$ok" >&2
         fi
-        printf 'seam: that slice needs what a later one has. Put it with the slice that completes it, or say what it waits on in .seam/first.\n' >&2
+        # 127 is the shell saying it never found the command. That is not the
+        # slice's fault and no advice about splitting applies to it.
+        if [ "$ok" -eq 127 ]; then
+          printf 'seam: that is the check not running, rather than the slice failing. It runs under /bin/sh, so a command your interactive shell finds by way of a version manager or a function is not always there; give it a path, or a shell that loads what it needs.\n' >&2
+        else
+          printf 'seam: that slice needs what a later one has. Put it with the slice that completes it, or say what it waits on in .seam/first.\n' >&2
+        fi
         exit 1
       fi
       echo "ok"
@@ -627,6 +644,7 @@ stack() {
     k=$((k + 1))
   done
   unset GIT_INDEX_FILE
+  [ ! -d "$tmp/wt" ] || git worktree remove --force "$tmp/wt" 2>/dev/null
   git update-ref "refs/heads/$branch" "$parent" || exit 1
   if git diff-tree --quiet "$parent" "$headc"; then
     printf '%s: %s commits from %s, ending at the tree %s has.\n' "$branch" "$n" "$base" "$head"

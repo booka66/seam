@@ -40,8 +40,11 @@ and `space` marks one read and moves on — read state is per definition, not pe
 file, and lives in that browser.
 
 Either way the panel holds the definition: what its change means in a sentence,
-then its own diff, then what it uses and what uses it. `s` opens the score,
-drag to pan, wheel to zoom, `/` to filter.
+then its own diff, then what it uses and what uses it. With nothing picked it
+holds the change itself — what it is made of, and which definitions carry
+furthest, which is the best guess at what a reviewer will miss. `s` opens the
+score, drag to pan, wheel to zoom, `/` to filter, and the rest is behind the
+one button at the end of the bar.
 
 It is one self-contained file with the graph inside it, so it works offline and
 can be sent to someone. The same page (`share/view.html`) opened on its own takes

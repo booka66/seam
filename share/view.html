@@ -64,52 +64,70 @@
   button, input { font-family: inherit; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* ---------- top bar ---------- */
+  /* ---------- top bar ----------
+     Three groups and no more: what this is, which view, and what you can do
+     to it. Everything that was a fourth group is either in the menu at the
+     end or in the panel, where there was already room for it. */
   header {
-    height: 58px; flex: none; display: flex; align-items: center; gap: 16px;
-    padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+    height: 52px; flex: none; display: flex; align-items: center; gap: 14px;
+    padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: relative;
   }
-  .wordmark { font-family: var(--display); font-size: 26px; line-height: 1; }
-  .rev { font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .views { display: inline-flex; gap: 2px; padding: 3px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .wordmark { font-family: var(--display); font-size: 23px; line-height: 1; }
+  .rev { font-family: var(--mono); font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .views { display: inline-flex; gap: 2px; padding: 2px; background: var(--ground); border: 1px solid var(--line); border-radius: 9px; margin: 0 auto; }
   .views button {
-    font-size: 12px; font-weight: 500; height: 28px; padding: 0 14px;
-    border: 0; border-radius: 6px; background: none; color: var(--dim); cursor: pointer;
+    font-size: 12px; font-weight: 500; height: 26px; padding: 0 13px;
+    border: 0; border-radius: 7px; background: none; color: var(--dim); cursor: pointer;
   }
-  .views button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
-  .find { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; flex: 0 1 240px; }
+  .views button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .right { display: flex; align-items: center; gap: 8px; }
+  .find { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; background: var(--ground); border: 1px solid var(--line); border-radius: 9px; width: 190px; transition: width .16s ease; }
+  .find:focus-within { width: 250px; border-color: var(--accent); }
   .find input { border: 0; background: none; color: inherit; font-size: 12.5px; width: 100%; min-width: 0; }
   .find input::placeholder { color: var(--faint); }
-  .tally { display: flex; gap: 13px; font-size: 12px; color: var(--dim); }
-  .tally span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .tally i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-  .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .find input:focus { outline: none; }
+  /* The verdict is the one thing in here with an opinion, so it is the one
+     thing allowed a colour. */
   .verdict {
-    display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px;
-    border-radius: 8px; border: 1px solid var(--line); background: var(--ground);
+    display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px;
+    border-radius: 9px; border: 1px solid var(--line); background: var(--ground);
     font-size: 12.5px; color: var(--dim); cursor: pointer; white-space: nowrap;
   }
-  .verdict i { width: 3px; height: 14px; border-radius: 2px; background: var(--added); }
+  .verdict i { width: 3px; height: 13px; border-radius: 2px; background: var(--added); }
   .verdict.look { background: var(--iface-soft); border-color: var(--iface-line); color: var(--iface); }
   .verdict.look i { background: var(--iface); }
   .verdict.bad { background: var(--removed-soft); border-color: var(--removed); color: var(--removed); }
   .verdict.bad i { background: var(--removed); }
   .ghostbtn {
-    height: 32px; padding: 0 14px; font-size: 12.5px; border: 1px solid var(--line);
-    border-radius: 8px; background: var(--panel); color: var(--dim); cursor: pointer;
+    height: 30px; padding: 0 13px; font-size: 12.5px; border: 1px solid var(--line);
+    border-radius: 9px; background: var(--panel); color: var(--dim); cursor: pointer;
   }
   .ghostbtn:hover { color: var(--ink); }
-  .toggles { display: flex; gap: 12px; }
-  .toggles label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap; }
+  .more { width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--ground); color: var(--dim); cursor: pointer; font-size: 15px; line-height: 1; }
+  .more:hover, .more[aria-expanded="true"] { color: var(--ink); background: var(--mark); }
+  .menu {
+    position: absolute; top: 46px; right: 16px; z-index: 30; width: 268px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.20);
+  }
+  .menu .mtitle { padding: 8px 10px 4px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .menu label { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+  .menu label:hover { background: var(--mark); }
+  .menu .keyline { padding: 8px 10px 6px; margin-top: 4px; border-top: 1px solid var(--rule); font-size: 11.5px; color: var(--faint); line-height: 1.7; }
+  .menu .keyline b { font-family: var(--mono); font-weight: 500; color: var(--dim); }
+  /* Read progress, as a hairline along the foot of the bar: ambient, and no
+     row of its own. */
+  .tide { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--added); transition: width .2s ease; z-index: 1; }
 
-  @media (max-width: 1240px) { header .tally { display: none; } }
-  @media (max-width: 1060px) { header .toggles { display: none; } }
+  @media (max-width: 900px) { header .find { width: 130px; } header .find:focus-within { width: 170px; } }
   main { flex-grow: 1; display: flex; min-height: 0; }
   #stage { position: relative; flex-grow: 1; min-width: 0; background: var(--ground); overflow: hidden; }
 
   /* ---------- graph ---------- */
-  .lanes { position: absolute; left: 0; right: 0; top: 0; height: 32px; background: var(--sunk); border-bottom: 1px solid var(--rule); z-index: 2; pointer-events: none; overflow: hidden; }
-  .lanes span { position: absolute; top: 10px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  .lanes { position: absolute; left: 0; right: 0; top: 0; height: 32px; z-index: 2; pointer-events: none; overflow: hidden; }
+  .lanes span { position: absolute; top: 12px; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ghost); white-space: nowrap; transition: opacity .18s ease; }
   svg.map { position: absolute; left: 0; top: 32px; right: 0; bottom: 0; width: 100%; height: calc(100% - 32px); cursor: grab; touch-action: none; }
   svg.map.dragging { cursor: grabbing; }
   .frame { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; rx: 12; }
@@ -120,10 +138,14 @@
   .edge.back { stroke: var(--removed); stroke-dasharray: 5 3; }
   .edge.fade { opacity: .18; }
   .edge.lit { stroke-width: 2.4; }
-  .node rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.3; rx: 9; }
-  .node.added rect.box { stroke: var(--added); }
-  .node.signature rect.box { stroke: var(--iface); stroke-width: 1.8; }
-  .node.removed rect.box { stroke: var(--removed); stroke-dasharray: 5 3; }
+  /* A box is a box. What kind of change it is lives in the glyph, which is one
+     character wide; amber on the box itself is kept for the only thing that
+     earns alarm — an interface something else names in its own signature, so
+     the change does not stop there. A screen where every box is amber says
+     nothing at all. */
+  .node rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; rx: 9; }
+  .node.removed rect.box { stroke-dasharray: 5 3; }
+  .node.carries rect.box { stroke: var(--iface-line); stroke-width: 1.6; }
   .node .glyph { font-family: var(--mono); font-size: 12px; font-weight: 500; }
   .node .label { font-family: var(--mono); font-size: 12.5px; fill: var(--ink); }
   .node .lines { font-family: var(--mono); font-size: 10.5px; fill: var(--faint); }
@@ -136,22 +158,26 @@
   .carries rect { fill: var(--iface-soft); stroke: var(--iface-line); rx: 8; }
   .carries text { font-family: var(--ui); font-size: 9.5px; fill: var(--iface); }
 
-  .overlay { position: absolute; display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; font-size: 11px; color: var(--dim); }
-  .legend { left: 16px; bottom: 16px; }
-  .legend i { width: 20px; height: 0; border-top-width: 2px; display: inline-block; }
-  .legend span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
-  .zoom { right: 16px; top: 48px; padding: 4px; gap: 4px; }
-  .zoom button { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--dim); font-size: 13px; cursor: pointer; }
-  .zoom button.wide { width: auto; padding: 0 9px; font-size: 11.5px; }
+  /* Chrome on the canvas waits to be wanted: it fades in when the pointer is
+     over the stage and is not there at all when it would say nothing. */
+  .overlay { position: absolute; display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 11px; color: var(--dim); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  .overlay.shy { opacity: 0; transition: opacity .18s ease; pointer-events: none; }
+  #stage:hover .overlay.shy, .overlay.shy:focus-within { opacity: 1; pointer-events: auto; }
+  .zoom { right: 16px; bottom: 16px; padding: 4px; gap: 2px; }
+  .zoom button { width: 27px; height: 27px; border: 0; border-radius: 7px; background: none; color: var(--dim); font-size: 13px; cursor: pointer; }
+  .zoom button.wide { width: auto; padding: 0 10px; font-size: 11.5px; }
   .zoom button:hover { background: var(--mark); color: var(--ink); }
-  #mini { position: absolute; right: 16px; bottom: 16px; width: 186px; height: 112px; padding: 6px; overflow: hidden; }
+  #mini { position: absolute; right: 16px; bottom: 60px; width: 168px; height: 100px; padding: 6px; overflow: hidden; }
   #mini svg { display: block; width: 100%; height: 100%; }
   .mini-dot { fill: var(--ghost); }
   .mini-dot.hot { fill: var(--iface); }
   .mini-view { fill: none; stroke: var(--accent); stroke-width: 6; }
 
   /* ---------- reading ---------- */
-  #reading { position: absolute; inset: 0; overflow: auto; padding: 24px 28px 60px; }
+  #reading { position: absolute; inset: 0; overflow: auto; padding: 26px 28px 60px; }
+  /* A column, not the whole width of the window: a row of names 1500px wide
+     is one your eye loses its place along. */
+  #reading > * { max-width: 980px; margin-left: auto; margin-right: auto; }
   .head-line { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
   .head-line h2 { font-family: var(--display); font-weight: 400; font-size: 22px; margin: 0; }
   .head-line p { margin: 0; font-size: 12.5px; color: var(--dim); }
@@ -232,6 +258,28 @@
   .empty { color: var(--faint); font-size: 12.5px; padding: 0 20px; margin: 0; }
   .hint { color: var(--dim); font-size: 12.5px; line-height: 1.6; padding: 20px; }
   .hint code { font-family: var(--mono); background: var(--mark); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---------- the panel with nothing selected ----------
+     It is the widest thing on the screen, so it does not get to say "click a
+     definition" and stop. With nothing chosen it is the change at a glance:
+     what kind of change it is, and which definitions carry furthest. */
+  .over { padding: 22px 20px 26px; }
+  .over h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 25px; line-height: 1.15; }
+  .over .sub { margin: 6px 0 0; font-size: 12.5px; color: var(--dim); }
+  .counts { margin: 20px 0 0; display: flex; flex-direction: column; gap: 1px; }
+  .counts .c { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
+  .counts .c:hover { background: var(--mark); cursor: pointer; }
+  .counts .c b { font-family: var(--mono); font-weight: 500; font-size: 13px; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+  .counts .c span { color: var(--dim); }
+  .counts .c i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .over .lead { margin: 22px 0 8px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .carry-list { display: flex; flex-direction: column; gap: 1px; }
+  .carry-list button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; color: inherit; cursor: pointer; min-width: 0; }
+  .carry-list button:hover { background: var(--mark); }
+  .carry-list .nm { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .carry-list .n { margin-left: auto; flex: none; font-size: 11px; color: var(--iface); white-space: nowrap; }
+  .over .note { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 12px; line-height: 1.65; color: var(--faint); }
+  .over .note b { font-weight: 500; color: var(--dim); }
 
   /* ---------- score ---------- */
   .veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; z-index: 20; }
@@ -370,9 +418,14 @@
     var fit = true, view = { k: 1, x: 0, y: 0 }, world = null, svg = null, lastLayout = null, dragged = false;
 
     // ---------- chrome ----------
+    // Three groups: what this is, which view, what you can do to it. The two
+    // filters and the key to the arrows live behind the last button, because
+    // they are read once and then never again.
     var head = h("header");
-    head.appendChild(h("span", "wordmark", "seam"));
-    head.appendChild(h("span", "rev", g.rev || ""));
+    var brand = h("div", "brand");
+    brand.appendChild(h("span", "wordmark", "seam"));
+    brand.appendChild(h("span", "rev", g.rev || ""));
+    head.appendChild(brand);
 
     var views = h("div", "views");
     var bGraph = h("button", null, "Graph"), bRead = h("button", null, "Reading order");
@@ -381,6 +434,8 @@
     bRead.addEventListener("click", function () { state.view = "reading"; draw(); });
     views.appendChild(bGraph); views.appendChild(bRead);
     head.appendChild(views);
+
+    var right = h("div", "right");
 
     var find = h("label", "find");
     var mag = s("svg"); attr(mag, { width: 13, height: 13, viewBox: "0 0 16 16", fill: "none", stroke: "var(--faint)", "stroke-width": 1.6 });
@@ -391,40 +446,54 @@
     search.type = "search"; search.id = "seam-find"; search.placeholder = "Filter by name or file";
     search.addEventListener("input", function () { state.q = search.value.toLowerCase(); fit = true; draw(); });
     find.appendChild(search);
-    head.appendChild(find);
+    right.appendChild(find);
 
-    var tally = h("div", "tally");
-    [["signature", "interfaces"], ["added", "added"], ["body", "bodies"], ["removed", "removed"]].forEach(function (k) {
-      var n = defs.filter(function (d) { return d.change === k[0]; }).length;
-      if (!n) return;
-      var sp = h("span");
-      var i = h("i"); i.style.background = COLOUR[k[0]];
-      sp.appendChild(i);
-      sp.appendChild(document.createTextNode(n + " " + k[1]));
-      tally.appendChild(sp);
-    });
-    head.appendChild(tally);
-
-    var right = h("div", "right");
-    var progress = h("div", "prog");
-    right.appendChild(progress);
     if (score) {
       var v = h("span", "verdict " + (score.worst === 2 ? "bad" : score.worst === 1 ? "look" : ""));
       v.appendChild(h("i"));
       v.appendChild(document.createTextNode(score.verdict));
+      v.title = "What makes this change hard to read  (s)";
       v.addEventListener("click", function () { state.score = true; draw(); });
       right.appendChild(v);
     }
-    var tog = h("div", "toggles");
-    tog.appendChild(toggle("hideBody", "only what changed shape"));
-    tog.appendChild(toggle("hideAside", "source only"));
-    right.appendChild(tog);
+
+    var more = h("button", "more", "\u22ef");
+    more.type = "button";
+    more.setAttribute("aria-label", "More");
+    more.setAttribute("aria-expanded", "false");
+    var menu = null;
+    more.addEventListener("click", function (e) { e.stopPropagation(); menu ? closeMenu() : openMenu(); });
+    right.appendChild(more);
+
     head.appendChild(right);
+    var tide = h("div", "tide");
+    head.appendChild(tide);
     document.body.appendChild(head);
+
+    function openMenu() {
+      menu = h("div", "menu");
+      menu.addEventListener("click", function (e) { e.stopPropagation(); });
+      menu.appendChild(h("div", "mtitle", "Show"));
+      menu.appendChild(toggle("hideBody", "Only what changed shape"));
+      menu.appendChild(toggle("hideAside", "Source files only"));
+      var k = h("div", "keyline");
+      k.innerHTML = "A <b>solid</b> arrow is a name in the user\u2019s own signature, so the change carries on outward. A <b>dashed</b> one is in the body, where it stops. A <b>red</b> one is a cycle, cut where it was drawn." +
+        "<br><b>g</b> switch view \u00b7 <b>/</b> filter \u00b7 <b>s</b> score \u00b7 <b>space</b> mark read";
+      menu.appendChild(k);
+      head.appendChild(menu);
+      more.setAttribute("aria-expanded", "true");
+      document.addEventListener("click", closeMenu);
+    }
+    function closeMenu() {
+      if (!menu) return;
+      menu.remove(); menu = null;
+      more.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", closeMenu);
+    }
 
     function toggle(key, text) {
       var l = h("label"), c = document.createElement("input");
-      c.type = "checkbox"; c.id = "seam-" + key;
+      c.type = "checkbox"; c.id = "seam-" + key; c.checked = !!state[key];
       c.addEventListener("change", function () { state[key] = c.checked; fit = true; draw(); });
       l.appendChild(c); l.appendChild(document.createTextNode(text));
       return l;
@@ -701,7 +770,8 @@
       var gNodes = s("g"); world.appendChild(gNodes);
       L.nodes.forEach(function (p) {
         var d = p.def, carries = ifaceIn(d.id).length;
-        var gn = s("g", "node " + d.change + (state.sel === d.id ? " sel" : (lit && !near[d.id] ? " fade" : "")));
+        var loud = carries > 1 && (d.change === "signature" || d.change === "removed");
+        var gn = s("g", "node " + d.change + (loud ? " carries" : "") + (state.sel === d.id ? " sel" : (lit && !near[d.id] ? " fade" : "")));
         attr(gn, { transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button", "aria-label": label(d) });
         var box = s("rect", "box"); attr(box, { width: p.w, height: NH });
         gn.appendChild(box);
@@ -719,7 +789,7 @@
         var n2 = s("text", "lines"); attr(n2, { x: p.w - 10, y: NH / 2 + 4, "text-anchor": "end" });
         n2.textContent = (d.added ? "+" + d.added : "") + (d.removed ? " −" + d.removed : "");
         gn.appendChild(n2);
-        if (carries > 1 && (d.change === "signature" || d.change === "removed")) {
+        if (loud) {
           var cg = s("g", "carries");
           attr(cg, { transform: "translate(" + (p.w - 8) + ",-10)" });
           var cr = s("rect"); attr(cr, { x: -58, y: 0, width: 58, height: 17 });
@@ -740,20 +810,7 @@
 
       stage.appendChild(svg);
 
-      var lg = h("div", "overlay legend");
-      lg.appendChild(key("var(--iface)", "solid", "named in a signature"));
-      lg.appendChild(key("var(--ghost)", "dashed", "named in a body"));
-      if (Object.keys(L.back).length) lg.appendChild(key("var(--removed)", "dashed", "cycle, cut here"));
-      lg.appendChild(h("span", null, L.nodes.length + " of " + tops.length + " definitions"));
-      stage.appendChild(lg);
-      function key(color, style, text) {
-        var sp = h("span"), i2 = h("i");
-        i2.style.borderTopColor = color; i2.style.borderTopStyle = style;
-        sp.appendChild(i2); sp.appendChild(document.createTextNode(text));
-        return sp;
-      }
-
-      var z = h("div", "overlay zoom");
+      var z = h("div", "overlay zoom shy");
       [["−", "Zoom out", function () { zoomTo(view.k / 1.25); }],
        ["+", "Zoom in", function () { zoomTo(view.k * 1.25); }],
        ["fit", "Fit the graph", function () { fit = true; drawGraph(); }]].forEach(function (b) {
@@ -765,7 +822,13 @@
       });
       stage.appendChild(z);
 
-      var mini = h("div", "overlay"); mini.id = "mini";
+      // The map of the map, which is only worth its corner when the graph does
+      // not fit in the one you are looking at.
+      var roomW = stage.clientWidth || 900, roomH = (stage.clientHeight || 600) - 32;
+      if (L.box.w > roomW || L.box.h > roomH) drawMini(L);
+
+      function drawMini(L) {
+      var mini = h("div", "overlay shy"); mini.id = "mini";
       var ms = s("svg");
       attr(ms, { viewBox: "0 0 " + L.box.w + " " + L.box.h, preserveAspectRatio: "xMidYMid meet" });
       L.nodes.forEach(function (p) {
@@ -778,14 +841,9 @@
       ms.appendChild(mv);
       mini.appendChild(ms);
       stage.appendChild(mini);
-
-      if (fit) {
-        var w = stage.clientWidth || 900, hh = (stage.clientHeight || 600) - 32;
-        var k = Math.min(1.1, Math.min((w - 48) / L.box.w, (hh - 48) / L.box.h));
-        view = { k: Math.max(0.06, k), x: 24, y: 18 };
-        fit = false;
       }
-      apply();
+
+      fitView(L);
 
       svg.addEventListener("click", function () {
         if (dragged) { dragged = false; return; }
@@ -821,6 +879,20 @@
       svg.addEventListener("pointercancel", function () { down = null; svg.classList.remove("dragging"); });
     }
 
+    // Content sits in the middle of the room it has, rather than in the top
+    // left of a room it does not fill. A graph too big for the room is not
+    // shrunk past the point where a name can be read: below that it is a
+    // smear, and panning a legible graph beats squinting at all of one.
+    function fitView(L) {
+      if (!fit) { apply(); return; }
+      fit = false;
+      var w = stage.clientWidth || 900, hh = (stage.clientHeight || 600) - 32;
+      var raw = Math.min((w - 56) / L.box.w, (hh - 56) / L.box.h);
+      var k = Math.max(0.42, Math.min(1.5, raw));
+      var shownW = L.box.w * k;
+      view = { k: k, x: shownW < w ? Math.round((w - shownW) / 2) : 28, y: 20 };
+      apply();
+    }
     function zoomTo(k) {
       var w = stage.clientWidth / 2, hh = stage.clientHeight / 2;
       var k2 = Math.min(3, Math.max(0.05, k));
@@ -905,7 +977,9 @@
       });
 
       if (loose.length) {
-        wrap.appendChild(rule(loose.length + " on their own — nothing else changed touches them"));
+        wrap.appendChild(rule(loose.length === 1
+          ? "One on its own — nothing else changed touches it"
+          : loose.length + " on their own — nothing else changed touches them"));
         var lb = h("div", "thread open");
         var ll = h("div", "rows");
         loose.forEach(function (d) { ll.appendChild(readingRow({ def: d, depth: 0, edge: null }, true)); });
@@ -913,7 +987,9 @@
         wrap.appendChild(lb);
       }
       if (files.length) {
-        wrap.appendChild(rule(files.length + " files seam read no definitions from"));
+        wrap.appendChild(rule(files.length === 1
+          ? "1 file seam read no definitions from"
+          : files.length + " files seam read no definitions from"));
         var ul = h("ul", "files");
         files.forEach(function (f) {
           var li = h("li");
@@ -993,12 +1069,7 @@
     function drawPanel() {
       panel.textContent = "";
       var d = byId[state.sel];
-      if (!d) {
-        var p = h("div", "hint");
-        p.innerHTML = "Click a definition.<br><br>An arrow runs from a definition to what it uses. A <b>solid</b> one means the name sits in the user's own signature, so a change to it carries on outward; a <b>dashed</b> one means it sits in the body, where it stops.";
-        panel.appendChild(p);
-        return;
-      }
+      if (!d) { drawOverview(); return; }
       var scroll = h("div", "scroll");
 
       var top = h("div", "ptop");
@@ -1067,6 +1138,63 @@
       foot.appendChild(h("span", "kbd", "space"));
       panel.appendChild(foot);
     }
+    // With nothing selected: what the change is made of, and which definitions
+    // carry furthest, which is the best guess at what a reviewer will miss.
+    function drawOverview() {
+      var o = h("div", "over");
+      var shownTops = tops.filter(shown);
+      o.appendChild(h("h2", null, count(shownTops.length) + (shownTops.length === 1 ? " definition" : " definitions")));
+      var doneN = shownTops.filter(function (x) { return read[x.id]; }).length;
+      var bits = [];
+      if (shownTops.length) bits.push("in " + areasOf(shownTops.map(function (x) { return { def: x }; })));
+      if (doneN) bits.push(doneN + " of " + shownTops.length + " read");
+      if (files.length) bits.push(files.length === 1 ? "1 file with none in it" : files.length + " files with none in them");
+      o.appendChild(h("p", "sub", bits.join(" \u00b7 ")));
+
+      var counts = h("div", "counts");
+      [["signature", "interfaces changed"], ["added", "added"], ["removed", "removed"], ["body", "bodies only"]].forEach(function (k) {
+        var n = shownTops.filter(function (x) { return x.change === k[0]; }).length;
+        if (!n) return;
+        var row = h("div", "c");
+        var i = h("i"); i.style.background = COLOUR[k[0]];
+        row.appendChild(i);
+        row.appendChild(h("b", null, String(n)));
+        row.appendChild(h("span", null, k[1]));
+        row.title = "Filter to these";
+        row.addEventListener("click", function () {
+          search.value = ""; state.q = ""; state.hideBody = (k[0] !== "body");
+          fit = true; draw();
+        });
+        counts.appendChild(row);
+      });
+      o.appendChild(counts);
+
+      var carriers = shownTops.map(function (x) { return { d: x, n: ifaceIn(x.id).length }; })
+        .filter(function (x) { return x.n > 0 && (x.d.change === "signature" || x.d.change === "removed"); })
+        .sort(function (a, b) { return b.n - a.n; }).slice(0, 6);
+      if (carriers.length) {
+        o.appendChild(h("div", "lead", "Carries furthest"));
+        var cl = h("div", "carry-list");
+        carriers.forEach(function (c) {
+          var b = h("button"); b.type = "button";
+          var gl = h("span", "g", GLYPH[c.d.change] || "\u00b7");
+          gl.style.color = COLOUR[c.d.change] || "var(--ghost)";
+          gl.style.fontFamily = "var(--mono)";
+          b.appendChild(gl);
+          b.appendChild(h("span", "nm", label(c.d)));
+          b.appendChild(h("span", "n", c.n === 1 ? "1 signature" : c.n + " signatures"));
+          b.addEventListener("click", function () { state.sel = c.d.id; draw(); });
+          cl.appendChild(b);
+        });
+        o.appendChild(cl);
+      }
+
+      var note = h("p", "note");
+      note.innerHTML = "Pick a definition to read it. <b>g</b> swaps the graph for the reading order; <b>space</b> marks one read and moves on.";
+      o.appendChild(note);
+      panel.appendChild(o);
+    }
+
     function uses(where, title, items, emptyText) {
       where.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
       if (!items.length) { where.appendChild(h("p", "empty", emptyText)); return; }
@@ -1174,13 +1302,8 @@
       bGraph.setAttribute("aria-pressed", graphing ? "true" : "false");
       bRead.setAttribute("aria-pressed", graphing ? "false" : "true");
       var doneN = tops.filter(function (d) { return read[d.id]; }).length;
-      progress.textContent = "";
-      if (doneN) {
-        progress.appendChild(document.createTextNode(doneN + " of " + tops.length + " read"));
-        var bar = h("span", "bar"), fill = h("i");
-        fill.style.width = Math.round((doneN / Math.max(1, tops.length)) * 74) + "px";
-        bar.appendChild(fill); progress.appendChild(bar);
-      }
+      tide.style.width = (doneN / Math.max(1, tops.length) * 100) + "%";
+      tide.title = doneN + " of " + tops.length + " read";
       if (graphing) drawGraph(); else drawReading();
       if (state.score && score) drawScore();
       drawPanel();

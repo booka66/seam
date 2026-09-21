@@ -354,6 +354,74 @@ expect history/whole-commit-only "$(seam "$hwbase..$hwhead" --split --json | jq 
 cd "$hs" || exit 1
 cd "$tmp" || exit 1
 
+# --- a foundation too small for a commit of its own: one line of a type
+# that two stories lean on goes into the first of them, not before them.
+hb=$tmp/hb
+mkdir "$hb" && cd "$hb" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+fn() { printf 'export function %s(k: K): number {\n  let n = %s;\n  n += 1;\n  n += 2;\n  n += 3;\n  return n;\n}\n' "$1" "$2"; }
+printf 'export type K = "a";\n' > hub.ts
+{ printf 'import { K } from "./hub";\n'; fn a1 'a2("a")'; fn a2 'a3("a")'; fn a3 0; } > a.ts
+{ printf 'import { K } from "./hub";\n'; fn b1 'b2("a")'; fn b2 'b3("a")'; fn b3 0; } > b.ts
+git add . && git commit -qm base && hbbase=$(git rev-parse HEAD)
+printf 'export type K = "a" | "b";\n' > hub.ts
+fn2() { printf 'export function %s(k: K): number {\n  let n = %s;\n  n += 10;\n  n += 20;\n  n += 30;\n  return n * %s;\n}\n' "$1" "$2" "$3"; }
+{ printf 'import { K } from "./hub";\n'; fn2 a1 'a2(k)' 2; fn2 a2 'a3(k)' 2; fn2 a3 1 2; } > a.ts
+{ printf 'import { K } from "./hub";\n'; fn2 b1 'b2(k)' 3; fn2 b2 'b3(k)' 3; fn2 b3 1 3; } > b.ts
+git add . && git commit -qm head && hbhead=$(git rev-parse HEAD)
+expect base/tiny-folds-forward "$(seam "$hbbase..$hbhead" --split --json | jq -r '[.slices[] | .kind + ":" + (.definitions | map(sub("^.*#"; "")) | sort | join(","))] | join(" / ")')" "story:K,a1,a2,a3 / story:b1,b2,b3"
+cd "$tmp" || exit 1
+
+# --- what has to wait (--last): the story changing a.ts goes after fb's,
+# and a later part of the same piece goes with what it leans on.
+cd "$sp" || exit 1
+expect last/moves-the-story "$(seam "$spbase..$sphead" --split --json --last a.ts | jq -r '[.slices[] | .name] | join(" ")')" "Mode fb1 fa1 c.ts and notes.md"
+expect last/unmatched-is-nothing "$(seam "$spbase..$sphead" --split --json --last nope.ts | jq -r '[.slices[] | .name] | join(" ")')" "Mode fa1 fb1 c.ts and notes.md"
+cd "$hs" || exit 1
+expect last/takes-its-piece "$(seam "$hsbase..$hshead" --split --json --last send.ts | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "Draft,send / make,mint"
+
+# --- a provider only --split waits for (#seam: split). What it says from one
+# changed definition to another is an edge the split keeps: here, that fb1
+# reads something fa1 added, which joins the two stories. It is not run to
+# read the change, and it is asked once for the two commits.
+cd "$sp" || exit 1
+mkdir -p .seam/references
+cat > .seam/references/fields <<'EOF'
+#!/bin/sh
+#seam: split
+echo run >> "$FIELDS_RUNS"
+printf 'b.ts#fb1\ta.ts#fa1\tbody\treads a field fa1 added\n'
+EOF
+chmod +x .seam/references/fields
+FIELDS_RUNS=$tmp/fields.runs
+export FIELDS_RUNS
+expect split-refs/not-read "$(seam "$spbase..$sphead" --json | jq -r '.references | length')" "0"
+expect split-refs/joins "$(seam "$spbase..$sphead" --split --json 2>/dev/null | jq -r '[.slices[] | select(.kind == "story")] | length')" "1"
+seam "$spbase..$sphead" --split --json > /dev/null 2>&1
+expect split-refs/asked-once "$(wc -l < "$FIELDS_RUNS" | tr -d ' ')" "1"
+rm -rf .seam "$(git rev-parse --git-common-dir)/seam-refs-split"
+unset FIELDS_RUNS
+
+# --- titles: with glossing asked for, every slice with no commit of its own to
+# take a message from is named by Claude, here a stand-in that names slice n
+# "title n" and keeps the prompt.
+cat > "$tmp/stub/titles" <<'EOF'
+#!/bin/sh
+cat > "$STUB_PROMPT"
+jq -n --argjson ns "$(sed -n 's/^## Slice \([0-9]*\): name this$/\1/p' "$STUB_PROMPT" | jq -s -c .)" \
+  '{is_error: false, structured_output: {slices: [$ns[] | {n: ., subject: "title \(.)", body: "why \(.) matters, said at some length so that the body has to be wrapped before it becomes a commit message"}]}}'
+EOF
+chmod +x "$tmp/stub/titles"
+expect titles/off "$(SEAM_CLAUDE=$tmp/stub/titles seam "$spbase..$sphead" --split --json | jq -r '[.slices[].title // empty] | length')" "0"
+expect titles/drawn "$(SEAM_COLOR=0 SEAM_CLAUDE=$tmp/stub/titles STUB_PROMPT=$tmp/tprompt seam "$spbase..$sphead" --split --gloss 2>/dev/null | grep -c '^ *2  title 2  ')" "1"
+expect titles/prompt-has-the-change "$(grep -c '^    +' "$tmp/tprompt" | awk '{ print ($1 > 0) }')" "1"
+expect titles/kept "$(SEAM_CLAUDE=false seam "$spbase..$sphead" --split --json --gloss | jq -r '.slices[1].title.subject')" "title 2"
+SEAM_CLAUDE=false seam "$spbase..$sphead" --split --gloss --branch titled > /dev/null 2>&1
+expect titles/branch-subject "$(git log -1 --format=%s titled~2)" "title 2"
+expect titles/branch-body "$(git log -1 --format=%b titled~2 | awk '{ if (length > m) m = length } END { print (m <= 72) }')" "1"
+cd "$hs" || exit 1
+expect titles/commits-need-none "$(SEAM_CLAUDE=false seam "$hsbase..$hshead" --split --json --gloss 2>/dev/null | jq -r '[.slices[].title // empty] | length')" "0"
+
 # --- references from outside what seam can see. An edge here is a name inside
 # a changed definition, so an import is invisible to it: a type that moves
 # package leaves every importer in the last slice and the move in the first.

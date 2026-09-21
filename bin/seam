@@ -22,6 +22,9 @@
 # seam <rev> --split --first <glob>   those paths in a slice before every
 #                                     other, for what the code waits on and
 #                                     seam has no language to see
+# seam <rev> --split --last <glob>    the slices changing those paths after
+#                                     every other story, for what has to wait
+#                                     on something outside the change
 # seam <rev> --split --plan-out <file>  the plan as json, rewritten there
 #                                     whenever a check sends seam back to it
 # seam <rev> --split --branch <n> --check '<cmd>'
@@ -158,12 +161,13 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= md= glossy= wantcallers= score= brief= table= split= branch= firstglobs= check= checkset= planout= at= want=
+rev= json= html= md= glossy= wantcallers= score= brief= table= split= branch= firstglobs= lastglobs= check= checkset= planout= at= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
     branch) branch=$a split=1 want=; continue ;;
     first) firstglobs="$firstglobs $a" want=; continue ;;
+    last) lastglobs="$lastglobs $a" split=1 want=; continue ;;
     check) check=$a checkset=1 split=1 want=; continue ;;
     planout) planout=$a split=1 want=; continue ;;
     at) at=$a want=; continue ;;
@@ -180,6 +184,7 @@ for a in "$@"; do
     --table) want=table ;;
     --split) split=1 ;;
     --first) want=first ;;
+    --last) want=last ;;
     --check) want=check ;;
     --plan-out) want=planout ;;
     --at) want=at ;;
@@ -193,6 +198,7 @@ case $want in
   table) echo "seam: --table wants a file" >&2; exit 2 ;;
   branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
   first) echo "seam: --first wants a path pattern" >&2; exit 2 ;;
+  last) echo "seam: --last wants a path pattern" >&2; exit 2 ;;
   check) echo "seam: --check wants a command" >&2; exit 2 ;;
   planout) echo "seam: --plan-out wants a file" >&2; exit 2 ;;
   at) echo "seam: --at wants a definition" >&2; exit 2 ;;
@@ -282,7 +288,13 @@ hunk_awk=$(cat "$share/hunks.awk")
 # whose to is - breaks without calling anything the change touched. They
 # never move a slice: a caller is not in the change.
 #
-# providers <eager|lazy>: each provider's path, the nearest of a name winning.
+# A provider that says `#seam: split` is one too slow for every read but worth
+# waiting for when the answer moves a slice: a compiler saying which changed
+# definition reads a field another one added, which no name in either says.
+# Only --split runs it, and what it says is kept by the two commits, the way
+# the callers are; its rows are an ordinary provider's.
+#
+# providers <eager|lazy|split>: each provider's path, the nearest of a name winning.
 # A file of that name that is not executable (an empty one will do) wins too,
 # and runs nothing: that is how a repo turns off one seam ships.
 # Names of its own for the loop: sh has no locals, and page, split and the
@@ -302,23 +314,48 @@ providers() {
       [ -x "$reffile" ] || continue
       if head -n 20 "$reffile" 2>/dev/null | grep -q '^#seam: *lazy'; then
         [ "$1" = lazy ] && printf '%s\n' "$reffile"
+      elif head -n 20 "$reffile" 2>/dev/null | grep -q '^#seam: *split'; then
+        [ "$1" = split ] && printf '%s\n' "$reffile"
       else
         [ "$1" = eager ] && printf '%s\n' "$reffile"
       fi
     done
   done
 }
+# refs <table> [split]: what the providers say, the split ones too when asked.
 refs() {
   : > "$1.refs"
   providers eager > "$1.providers"
   while read -r reffile; do
     # A provider that fails says nothing rather than stopping the change
     # being read: seam worked before it existed and works if it breaks.
-    SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null |
-      awk -F'\t' -v via="${reffile##*/}" 'NF >= 2 && $1 != "" && $2 != "" {
-        print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
-      }' >> "$1.refs"
+    SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null | refrows "${reffile##*/}" >> "$1.refs"
   done < "$1.providers"
+  [ "$2" = split ] || return 0
+  providers split > "$1.providers"
+  [ -s "$1.providers" ] || return 0
+  # Kept only when every one of them ran, like the callers: a compiler that
+  # was not installed yet is asked again rather than remembered as silent.
+  srfile=$(cachefile refs-split "$1")
+  if [ ! -f "$srfile" ]; then
+    : > "$1.split"
+    srok=1
+    while read -r reffile; do
+      printf 'seam: asking %s, which can take a while\n' "${reffile##*/}" >&2
+      SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" > "$1.split.out" 2>"$1.split.err" ||
+        { srok=; printf 'seam: %s failed: %s\n' "${reffile##*/}" "$(head -c 300 "$1.split.err" | tr '\n' ' ')" >&2; }
+      refrows "${reffile##*/}" < "$1.split.out" >> "$1.split"
+    done < "$1.providers"
+    if [ -n "$srok" ]; then mkdir -p "${srfile%/*}" && cp "$1.split" "$srfile"; fi
+    cat "$1.split" >> "$1.refs"
+  else
+    cat "$srfile" >> "$1.refs"
+  fi
+}
+refrows() {
+  awk -F'\t' -v via="$1" 'NF >= 2 && $1 != "" && $2 != "" {
+    print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
+  }'
 }
 
 # --json: the table as the graph, with the edges kept and each definition's box
@@ -328,7 +365,7 @@ refs() {
 # The callers the lazy providers found go in too, when they are kept.
 graph() {
   cut -f1 "$1" | sort -u | kinds > "$1.kinds"
-  refs "$1"
+  refs "$1" "$2"
   cf=$(cachefile callers "$1"); [ -s "$cf" ] || cf=/dev/null
   jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
     --rawfile kinds "$1.kinds" --rawfile refs "$1.refs" -f "$share/graph.jq" < "$1" |
@@ -702,12 +739,100 @@ plan() {
       done ) >> "$tmp/first.paths"
   fi
   jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
+  # --last: which paths of the change hold what has to wait, matched the same
+  # way but against every path, since what waits is code.
+  ( set -f
+    [ -n "$(printf '%s' "$lastglobs" | tr -d '[:space:]')" ] &&
+    cut -f1 "$out" | sort -u | while read -r p; do
+      for g in $lastglobs; do
+        case $p in $g) printf '%s\n' "$p"; break ;; esac
+      done
+    done ) | jq -R -s 'split("\n") | map(select(length > 0))' > "$tmp/last.json"
   sweeps > "$tmp/sweeps.json"
   history > "$tmp/history.json"
-  jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" \
+  jq -c --argjson first "$(cat "$tmp/first.json")" --slurpfile last "$tmp/last.json" \
     --argjson sweeps "$(cat "$tmp/sweeps.json")" --slurpfile history "$tmp/history.json" \
-    -f "$share/split.jq" < "$tmp/graph.json" |
-    if [ "$1" = json ]; then jq -c --arg check "$check" '. + {check: (if $check == "" then null else $check end)}'; else cat; fi
+    -f "$share/split.jq" < "$tmp/graph.json" > "$tmp/plan.raw" || exit 1
+  titles "$tmp/plan.raw" > "$tmp/plan.titled" || cp "$tmp/plan.raw" "$tmp/plan.titled"
+  if [ "$1" = json ]; then
+    jq -c --arg check "$check" '. + {check: (if $check == "" then null else $check end)}' "$tmp/plan.titled"
+  else
+    # The rows draw_split reads: a slice goes by the message it will have.
+    jq -r '"rev\t" + (.rev // "a change"),
+      "totals\t\(.totals.definitions) definitions · \(.totals.edges) edges · \(.totals.files) files → \(.slices | length) slices",
+      (.slices[] | . as $s
+       | ("slice\t\($s.n)\t\($s.kind)\t"
+          + (if $s.commit then $s.commit.subject elif $s.title then $s.title.subject
+             elif $s.kind == "base" then ($s.roots | join(", ")) else $s.name end)
+          + "\t" + (if ($s.commit or $s.title) then "" elif $s.kind == "story" and ($s.roots | length) > 1 then "\(($s.roots | length) - 1) more" else "" end)
+          + "\t\($s.definitions | length)\t\($s.files | length)\t\($s.lines)"),
+         ($s.files[] | "file\t\($s.n)\t\(.path)\t"
+            + (if (.shared | length) > 0 then "shared with " + (.shared | map(tostring) | join(", ")) else "" end)
+            + "\t" + (if .via then "with " + (.via | sub("^.*/"; "")) else "" end)))' "$tmp/plan.titled"
+  fi
+}
+
+# titles <plan>: the plan with a subject and body on every slice that has no
+# commit of the branch's to take one from, written by Claude, when glossing is
+# on or --gloss asked for it this once. seam's own name for a slice is its
+# entry point's, which is a placeholder: a stack whose messages are symbol
+# names is a stack every one of whose MRs has to be retitled by hand. Claude
+# sees each slice's definitions and their diffs, and the other slices for what
+# the order means, and nothing else; it has no tools. Kept by the two commits
+# and what is in each slice, so the same plan is titled once. A plan with
+# nothing to title, glossing off, or no Claude is the plan as it was.
+titles() {
+  { [ -n "$glossy" ] || glosson; } || { cat "$1"; return; }
+  jq -e '[.slices[] | select(.commit | not)] | length > 0' "$1" >/dev/null || { cat "$1"; return; }
+  claude=${SEAM_CLAUDE:-claude}
+  command -v "$claude" >/dev/null 2>&1 || { echo "seam: titling slices wants Claude Code on the PATH" >&2; cat "$1"; return; }
+  tf=$(cachefile titles "$out")
+  tf=${tf%.json}-$({ titlemodel; jq -c '[.slices[] | [.definitions, [.files[].path], (.commit.sha // "")]]' "$1"; } | git hash-object --stdin).json
+  if [ ! -s "$tf" ]; then
+    diffs "$out" > "$tmp/diffs.json"
+    {
+      cat <<'PROMPT'
+You are naming the commits of a stack that one change is being split into. Each commit becomes its own merge request, and its subject and body become the MR's title and description, read by a reviewer who has seen none of the others. For every slice marked "name this", write a subject and a body. Subject: at most 72 characters, imperative, sentence case, no prefix and no trailing period, saying what the commit does to the product's or the code's behaviour, not which files or functions it touches ("Carry reply discount codes to the queued send"). Body: at most sixty words in one to three plain sentences, for that reviewer: what it changes and why, and how it stands to the commits around it (what it makes possible, what it waits on, what is inert until a later one lands). Name what the whole commit is for, not the first helper in it: a helper extracted on the way is not the point. Refer to the others as "the commit before" or "a later commit", never as slices, and never write "seam". Slices marked "named" already have their message and are shown for context. The slices are in the order they will land.
+
+PROMPT
+      # A definition's diff is its whole text, so only what changed and two
+      # lines either side: the top of a long function is not the change.
+      jq -r --slurpfile d "$tmp/diffs.json" --slurpfile g "$tmp/graph.json" '
+        def changed: . as $l
+          | [range(0; length) | . as $i | select(any($l[([$i - 2, 0] | max):($i + 3)][]; .mark != " "))] as $k
+          | [range(0; $k | length) as $j
+             | (if $j > 0 and $k[$j] > $k[$j - 1] + 1 then "    …" else empty end), "    \($l[$k[$j]].mark)\($l[$k[$j]].text)"]
+          | .[:60] | join("\n");
+        ($g[0].definitions | map({key: .id, value: .}) | from_entries) as $def
+        | .slices[]
+        | "## Slice \(.n): " + (if .commit then "named: \(.commit.subject)" else "name this" end),
+          "files: " + ([.files[].path] | join(", ")),
+          (if .commit then empty else
+            ([.definitions[] | $def[.] // empty
+              | "### \(.id) (\(.change), +\(.added // 0) -\(.removed // 0))\n" + (($d[0][.id] // []) | changed)]
+             | .[:8] | join("\n"))
+           end),
+          ""' "$1"
+    } > "$tmp/tprompt"
+    jq -c '[.slices[] | select(.commit | not) | .n] as $ns | {type: "object", additionalProperties: false, required: ["slices"], properties: {
+        slices: {type: "array", items: {type: "object", additionalProperties: false, required: ["n", "subject", "body"],
+          properties: {n: {enum: $ns}, subject: {type: "string"}, body: {type: "string"}}}}}}' "$1" > "$tmp/tschema"
+    mkdir -p "$tmp/empty" "${tf%/*}" || { cat "$1"; return; }
+    printf 'seam: asking Claude to title %s slice(s)\n' "$(jq '[.slices[] | select(.commit | not)] | length' "$1")" >&2
+    (cd "$tmp/empty" && MAX_THINKING_TOKENS=0 "$claude" -p --model "$(titlemodel)" --restricted --tools "" --strict-mcp-config \
+      --disable-slash-commands --no-session-persistence --permission-prompts none --output-format json \
+      --json-schema "$(cat "$tmp/tschema")" < "$tmp/tprompt") > "$tmp/tanswer" 2> "$tmp/tanswer.err"
+    if jq -e '(.is_error | not) and .structured_output != null' "$tmp/tanswer" >/dev/null 2>&1; then
+      jq -c '.structured_output.slices | map({key: (.n | tostring), value: {subject, body}}) | from_entries' "$tmp/tanswer" > "$tf"
+    else
+      printf 'seam: Claude did not title these: %s\n' "$(head -c 300 "$tmp/tanswer.err" "$tmp/tanswer" | tr '\n' ' ')" >&2
+    fi
+  fi
+  if [ -s "$tf" ]; then
+    jq -c --slurpfile t "$tf" '.slices |= map(if (.commit | not) and $t[0][.n | tostring] then .title = $t[0][.n | tostring] else . end)' "$1"
+  else
+    cat "$1"
+  fi
 }
 
 # --branch: the slices as commits, in the order the plan has them, on a new
@@ -816,7 +941,12 @@ stack() {
     # A slice that is one of the branch's own commits says what that commit
     # said: the author wrote it for a reviewer, and seam's is a placeholder.
     from=$(jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .commit.sha // empty' "$tmp/plan.json")
-    commit=$(if [ -n "$from" ]; then git log -1 --format=%B "$from"; else
+    titled=$(jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .title.subject // empty' "$tmp/plan.json")
+    commit=$(if [ -n "$from" ]; then git log -1 --format=%B "$from"
+    elif [ -n "$titled" ]; then
+      printf '%s\n\n' "$titled"
+      jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .title.body' "$tmp/plan.json" | fold -s -w 72 | sed 's/ *$//'
+    else
       jq -r --argjson k "$k" --argjson n "$n" '.slices[] | select(.n == $k)
       | .name + (if (.roots | length) > 1 then " and " + ((.roots | length) - 1 | tostring) + " more" else "" end),
         "", "Slice \($k) of \($n), cut by seam --split.",
@@ -982,6 +1112,10 @@ page() {
 # worktree's by its table, so an edit glosses again.
 glossfile() { cachefile gloss "$1"; }
 glossmodel() { git config --get seam.glossModel || echo claude-haiku-4-5; }
+# Titles are asked for once a plan and read by every reviewer of the stack,
+# and Haiku named the helper a commit extracts rather than what it is for; a
+# stronger model is worth the few seconds.
+titlemodel() { git config --get seam.titleModel || echo claude-sonnet-5; }
 glosson() { [ "$(git config --bool --get seam.gloss)" = true ]; }
 gloss() {
   file=$(glossfile "$1")
@@ -1495,6 +1629,12 @@ if [ -n "$html" ]; then
     [ -n "$wantcallers" ] && { callers "$out" >/dev/null || true; }
     page "$out"
   fi
+# Before --gloss: with --split it titles the slices, not the definitions.
+elif [ -n "$split" ]; then
+  graph "$out" split > "$tmp/graph.json"
+  if [ -n "$branch" ]; then stack
+  elif [ -n "$json" ]; then plan json
+  else plan "" | draw_split; fi
 elif [ -n "$glossy" ]; then
   gloss "$out"
 elif [ -n "$md" ]; then
@@ -1503,11 +1643,6 @@ elif [ -n "$md" ]; then
   graph "$out" | jq -r --slurpfile gl "$gf" -f "$share/md.jq"
 elif [ -n "$wantcallers" ]; then
   callers "$out"
-elif [ -n "$split" ]; then
-  graph "$out" > "$tmp/graph.json"
-  if [ -n "$branch" ]; then stack
-  elif [ -n "$json" ]; then plan json
-  else plan "" | draw_split; fi
 elif [ -n "$score" ]; then
   if [ -n "$brief" ]; then graph "$out" | jq -r --arg brief 1 --arg fmt "" -f "$share/score.jq"
   else graph "$out" | jq -r --arg brief "" --arg fmt "" -f "$share/score.jq" | draw_score; fi

@@ -19,6 +19,8 @@ seam HEAD~..HEAD --md       the change by definition as markdown, for an agent
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam main...     --split    how to split it: one slice a story, each file placed
 seam main...     --split --branch cut   those slices as commits on a new branch
+seam main...     --split --last 'x/*'   what changes x/ after every other story
+seam main...     --split --gloss        each slice titled by Claude, for its MR
 seam worktree               what is changed against HEAD, staged or not
 seam --mr 1234              a GitLab merge request (or its URL), via glab
 ```
@@ -259,7 +261,10 @@ or more definitions, seam looks for the one whose removal breaks it into the
 most stories, and takes it, with everything it mentions in turn, into a first
 slice the others lean on. That is what a person does by hand: the type in one
 commit, then each thing that uses it. It cuts again while a cut still helps,
-never taking more than half a piece.
+never taking more than half a piece. A foundation too small to be worth a
+commit, by the same two tests that fold a small story into the one before
+it, goes into the first slice that leans on it instead, since nothing before
+that one needs it.
 
 Then files. A member goes with its class. A definition on its own is not a
 story, and neither is a story made of tests, so those go by file: a file whose
@@ -301,6 +306,22 @@ three ways:
 - A file nothing else places goes with its commit's slice, before the
   directory rule.
 
+When the branch is one commit, only you know what has to wait: that the
+Commerce Agent half waits on someone else's MR and the Recover fix does not.
+`--last <pattern>` says so. A story changing a path it matches goes after
+every other story, and a later slice of the same piece goes with it, since it
+leans on it; the base still leads, because everything leans on that.
+
+A slice with no commit to take a message from is named after its entry
+point, which is a placeholder. With glossing on (`git config seam.gloss true`)
+or `--gloss` this once, Claude writes each one a subject and a body for the
+reviewer of its MR, from the changed lines of its definitions and the other
+slices around it; it has no tools and writes nothing but the answer. The
+split draws them and `--branch` commits with them. They are kept by the two
+commits and what is in each slice, so the same plan is titled once. Sonnet
+by default, since Haiku named the helper a commit extracted rather than what
+the commit was for; `git config seam.titleModel <id>` picks another.
+
 A slice that holds all of a commit, and mostly that commit, says what the
 commit said, subject and body, so a stack that mirrors the branch needs no
 rewording. A commit that went to two slices is claimed by neither, since its
@@ -324,6 +345,7 @@ brings its providers without writing into anyone's config (otis exports its
 | `languages/<name>.yml` | what a definition is | ast-grep rules |
 | `references/<name>` | what names what, from outside what seam reads | a command: table in, rows out |
 | `references/<name>` with `#seam: lazy` | what calls the change from outside it, and what that breaks | the same, run in the background |
+| `references/<name>` with `#seam: split` | what one changed definition needs of another, where no name says | the same, run only to split |
 | `kinds` | which files are tests, generated or config | a command: paths in, `path⇥kind` out |
 | `first` | what goes before everything in a split | path patterns |
 | `check` | whether a commit of the split stands up | a command |
@@ -404,6 +426,14 @@ score gains a line: any caller the change breaks makes it *breaks callers
 outside it*. A lazy provider never moves a slice, since a caller is not in the
 change. One that fails is asked again next time rather than kept as having
 found nothing. otis ships one over tsgo.
+
+A provider whose first lines say `#seam: split` is one too slow for every read
+but worth waiting for when its answer moves a slice. Only `--split` runs it,
+and what it says is kept by the two commits, like the callers. A row from one
+changed definition to another is an edge to the split, and one the change
+made: it joins stories and holds the one that needs the other after it. That
+is the dependency seam's names cannot see — a definition reading a field
+another one added, which neither names — and what a compiler can.
 
 **`containers/<name>`** — not yet. A path in, a box id out, so a definition can
 sit in a package or a bazel target and not only a file.

@@ -134,11 +134,16 @@ def tested:
 | ($g.definitions | map({key: .id, value: canon}) | from_entries) as $canon
 | (($ARGS.named.history // [])[0] // {commits: [], defs: {}, files: {}}) as $H
 | ($H.defs | map_values(earliest)) as $own
-| ($g.edges | map([$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null)) | unique) as $E
+# A provider's reference from one changed definition to another is an edge
+# too, and one the change makes: a compiler saying this reads a field that
+# one added is exactly the dependency seam's names cannot see.
+| ([($g.references // [])[] | [$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null)]) as $R
+| ($g.edges | map([$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null)) + $R | unique) as $E
 | (reduce $E[] as [$a, $b] ({}; .[$a] += [$b])) as $out
 | (reduce $E[] as [$a, $b] ({}; .[$b] += [$a])) as $into
 | (reduce ($g.edges[] | select(.new) | [$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null))
-     as [$a, $b] ({}; .[$a] += [$b])) as $outnew
+     as [$a, $b] ({}; .[$a] += [$b])
+   | reduce $R[] as [$a, $b] (.; .[$a] += [$b])) as $outnew
 | ([$D[] | select(.box.kind == "source") | .id]) as $src
 # The foundation: cut the biggest pieces at the definition that breaks them
 # into the most stories, until no cut does.
@@ -159,7 +164,7 @@ def tested:
     end)) as $cut
 | ([$src[] | select($cut.taken[.] | not)]) as $left
 # A piece is a story, or one a commit, when the branch's commits split it.
-| ([pieces($left; $E)[] | select(length >= 2) | . as $C
+| ([[pieces($left; $E)[] | select(length >= 2)] | to_entries[] | .key as $pi | .value as $C
     | ($C | map({key: ., value: true}) | from_entries) as $inC
     | settle($C; $inC; $own; $outnew) as $e
     | ($C | group_by($e[.]))[] | . as $P
@@ -169,13 +174,13 @@ def tested:
        | if length == 0 then [$defs | max_by(($out[.id] // []) | length)] else . end
        | sort_by(-lines) | map(.name)) as $roots
     | {kind: "story", roots: $roots, definitions: ($defs | sort_by(-lines) | map(.id)),
-       size: ($defs | map(lines) | add), commits: [$e[$P[0]]]}]
+       size: ($defs | map(lines) | add), commits: [$e[$P[0]]], pieces: [$pi]}]
    | sort_by(.commits[0], -.size)) as $found
 | ((if ($cut.hubs | length) == 0 then [] else
       [($cut.taken | keys | map($byid[.])) as $defs
        | {kind: "base", roots: ($cut.hubs | map($byid[.].name)),
           definitions: ($defs | sort_by(-lines) | map(.id)), size: ($defs | map(lines) | add),
-          commits: []}] end
+          commits: [], pieces: []}] end
     + $found)
    # The small ones folded into the slice before them, which for a story is
    # a bigger one from the same commit when there is one: the stories are in
@@ -186,8 +191,30 @@ def tested:
        then .[:-1] + [.[-1] + {roots: (.[-1].roots + $s.roots),
                                definitions: (.[-1].definitions + $s.definitions),
                                size: (.[-1].size + $s.size),
-                               commits: (.[-1].commits + $s.commits)}]
+                               commits: (.[-1].commits + $s.commits),
+                               pieces: (.[-1].pieces + $s.pieces)}]
        else . + [$s] end)
+   # What has to wait (--last): a story changing one of those paths goes after
+   # every other, and so does any later slice of the same piece, which leans
+   # on it. Nothing else can: pieces share no edges, and the base leads.
+   | ((($ARGS.named.last // [[]])[0]) | map({key: ., value: true}) | from_entries) as $late
+   | reduce .[] as $s ({keep: [], late: [], held: {}}; . as $st
+       | if $s.kind == "story" and (any($s.definitions[]; $late[$byid[.].path])
+                                    or any($s.pieces[]; $st.held[tostring]))
+         then .late += [$s] | .held += ($s.pieces | map({key: tostring, value: true}) | from_entries)
+         else .keep += [$s] end)
+   | .keep + .late
+   # A foundation too small for a commit of its own, by the same two tests,
+   # goes into the first slice that leans on it: nothing before that one
+   # needs it, so it can wait that long, and a two-line commit a reviewer
+   # opens only to be sent to the next is the offcut the fold is for.
+   | (map(.size) | add // 0) as $whole
+   | if length > 1 and .[0].kind == "base" and .[0].size < small and .[0].size * share < $whole then
+       .[0] as $b | ($b.definitions | map({key: ., value: true}) | from_entries) as $inb
+       | (first(range(1; length) as $i | select(any(.[$i].definitions[]; any(($out[.] // [])[]; $inb[.]))) | $i) // 1) as $k
+       | .[1:] | .[$k - 1] |= (. + {roots: (.roots + $b.roots), definitions: ($b.definitions + .definitions),
+                                     size: (.size + $b.size), commits: (.commits + $b.commits), pieces: (.pieces + $b.pieces)})
+     else . end
    | to_entries | map(.value + {n: (.key + 1), paths: (.value.definitions | map($byid[.].path) | unique)})) as $slices
 | (reduce $slices[] as $s ({}; reduce $s.definitions[] as $d (.; .[$d] = $s.n))) as $slot
 # Which slice a commit's stray file goes with: the biggest one it is in.
@@ -338,18 +365,8 @@ def tested:
 | ($pairs | group_by(.n) | map(max_by(.lines) | select(.lines * 2 > .tot and .lines == $whole[.c])
                             | {key: (.n | tostring), value: $cm[.c]}) | from_entries) as $msg
 | ($slices | map(if $msg[.n | tostring] then .commit = $msg[.n | tostring] else . end)) as $slices
-| if $fmt == "json" then
-    {rev: $g.rev, base: $g.base, head: $g.head, slices: $slices, shared: $shared}
-  else
-    ("rev\t" + ($g.rev // "a change")),
-    ("totals\t" + ($D | length | tostring) + " definitions · " + ($E | length | tostring) + " edges · "
-       + ($paths | length | tostring) + " files → " + ($slices | length | tostring) + " slices"),
-    ($slices[] | . as $s
-      | ("slice\t" + ($s.n | tostring) + "\t" + $s.kind + "\t"
-         + (if $s.commit then $s.commit.subject elif $s.kind == "base" then ($s.roots | join(", ")) else $s.name end)
-         + "\t" + (if $s.commit then "" elif $s.kind == "story" and ($s.roots | length) > 1 then (($s.roots | length) - 1 | tostring) + " more" else "" end)
-         + "\t" + ($s.definitions | length | tostring) + "\t" + ($s.files | length | tostring) + "\t" + ($s.lines | tostring)),
-        ($s.files[] | "file\t" + ($s.n | tostring) + "\t" + .path
-           + "\t" + (if (.shared | length) > 0 then "shared with " + (.shared | map(tostring) | join(", ")) else "" end)
-           + "\t" + (if .via then "with " + (.via | sub("^.*/"; "")) else "" end)))
-  end
+# The plan. Drawn by seam (draw_split) from this, after the titles, if any,
+# are in.
+| {rev: $g.rev, base: $g.base, head: $g.head,
+   totals: {definitions: ($D | length), edges: ($E | length), files: ($paths | length)},
+   slices: $slices, shared: $shared}

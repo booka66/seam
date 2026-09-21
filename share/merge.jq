@@ -16,9 +16,9 @@
    }) as $one
 | [.slices[] | select((.n | IN($g[])) | not)] as $rest
 | ([.slices[] | select(.n == $into)][0]) as $host
-# A fused slice is more than the commit it took its message from, so it goes
-# back to seam's name for it.
-| (($rest + [$host + $one | del(.commit)]) | sort_by(.n)) as $merged
+# A fused slice is more than the commit it took its message from, or the
+# slice Claude titled, so it goes back to seam's name for it.
+| (($rest + [$host + $one | del(.commit, .title)]) | sort_by(.n)) as $merged
 # A slice keeps its own numbering long enough to be sorted, then takes the
 # place it ended up in, and everything that named a slice by number follows.
 | ($merged | to_entries | map({key: (.value.n | tostring), value: (.key + 1)}) | from_entries) as $renum

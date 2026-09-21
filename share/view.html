@@ -508,7 +508,7 @@
     try { read = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { read = {}; }
     function save() { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (e) {} }
 
-    var state = { sel: null, view: "graph", q: "", hideBody: false, hideAside: false, open: {}, score: false };
+    var state = { sel: byId[g.at] ? g.at : null, view: "graph", q: "", hideBody: false, hideAside: false, open: {}, score: false };
 
     // ---------- Claude's notes ----------
     // A few words on each definition from seam --gloss, when there are any:

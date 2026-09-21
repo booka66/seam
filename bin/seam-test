@@ -139,6 +139,10 @@ seam "$base..$head" --html > "$p"
 expect html/is-a-page "$(head -1 "$p")" "<!doctype html>"
 expect html/carries-the-graph "$(grep -c 'id="seam-data"' "$p")" "1"
 expect html/same-graph "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$p" | sed 's|<\\/|</|g' | jq -r '.definitions | length')" "$(jq -r '.definitions | length' "$g")"
+# --at: the definition the page opens on, as --json names it.
+expect html/at "$(seam "$base..$head" --html --at 'lib.ts#run' | sed -n '/id="seam-data"/s/.*application\/json">//p' | sed 's|<\\/|</|g' | jq -r .at)" "lib.ts#run"
+expect html/no-at "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$p" | sed 's|<\\/|</|g' | jq -r .at)" "null"
+expect html/at-wants-a-definition "$(seam "$base..$head" --html --at 2>&1; echo "rc=$?")" "$(printf 'seam: --at wants a definition\nrc=2')"
 # A string in the code being read must not be able to close the script tag: the
 # page carries the graph as JSON, and </ in it is escaped.
 printf 'export const closes = "</script>";\n' > tag.ts

@@ -5,6 +5,8 @@
 # seam <rev> --gloss      Claude's few words on each definition, as json, for
 #                         the page and any other renderer (see gloss below)
 # seam <rev> --html --gloss   the page with them, for this run alone
+# seam <rev> --html --at <id>  the page open on that definition (path#name,
+#                         or path#Class.name, as --json has it)
 # seam <rev> --md         the change by definition as markdown, for an agent or
 #                         a description, with the notes and callers kept
 # seam <rev> --callers    what the lazy providers find outside the change, as
@@ -156,7 +158,7 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= md= glossy= wantcallers= score= brief= table= split= branch= firstglobs= check= checkset= planout= want=
+rev= json= html= md= glossy= wantcallers= score= brief= table= split= branch= firstglobs= check= checkset= planout= at= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
@@ -164,6 +166,7 @@ for a in "$@"; do
     first) firstglobs="$firstglobs $a" want=; continue ;;
     check) check=$a checkset=1 split=1 want=; continue ;;
     planout) planout=$a split=1 want=; continue ;;
+    at) at=$a want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
@@ -179,6 +182,7 @@ for a in "$@"; do
     --first) want=first ;;
     --check) want=check ;;
     --plan-out) want=planout ;;
+    --at) want=at ;;
     --branch) want=branch ;;
     --mr) want=mr ;;
     -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
@@ -191,10 +195,11 @@ case $want in
   first) echo "seam: --first wants a path pattern" >&2; exit 2 ;;
   check) echo "seam: --check wants a command" >&2; exit 2 ;;
   planout) echo "seam: --plan-out wants a file" >&2; exit 2 ;;
+  at) echo "seam: --at wants a definition" >&2; exit 2 ;;
   mr) echo "seam: --mr wants a number or a URL" >&2; exit 2 ;;
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
-[ -n "$rev" ] || { sed -n '2,11p' "$0" | sed 's/^# //' >&2; exit 2; }
+[ -n "$rev" ] || { sed -n '2,13p' "$0" | sed 's/^# //' >&2; exit 2; }
 # The check --branch runs when none is named: a command a line in .seam/check,
 # with check.local before it and this user's after, the way first is found.
 # --check '' is none at all. Found for any --split, so --split --json can say
@@ -867,7 +872,8 @@ stack() {
 # the definitions in reading order, and clicking one shows what it uses and what
 # uses it, each edge saying whether the mention is in a signature or a body. The
 # data goes in where the marker is, with </ escaped, so no string in the code
-# being read can close the script tag early.
+# being read can close the script tag early. --at goes in as .at, the
+# definition the page opens on.
 page() {
   diffs "$1" > "$tmp/diffs.json"
   graph "$1" > "$tmp/graph.json"
@@ -878,8 +884,9 @@ page() {
   printf '<script id="seam-data" type="application/json">'
   gf=$(glossfile "$1")
   [ -s "$gf" ] || gf=/dev/null
-  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" --slurpfile gl "$gf" --arg from "${2:-}" --arg cfrom "${3:-}" \
+  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" --slurpfile gl "$gf" --arg from "${2:-}" --arg cfrom "${3:-}" --arg at "$at" \
     '.definitions |= map(. + {diff: ($d[0][.id] // null)}) | .score = $s[0]
+     | if $at != "" then .at = $at else . end
      | if ($gl | length) > 0 then .gloss = $gl[0] elif $from != "" then .glossFrom = $from else . end
      | if .callers == null and $cfrom != "" then .callersFrom = $cfrom else . end' < "$tmp/graph.json" |
     sed 's|</|<\\/|g'

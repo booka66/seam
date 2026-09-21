@@ -70,6 +70,10 @@ that run alone: asking for them either way is opting in.
 `git config seam.glossModel <id>` picks another model, and the page's menu hides
 them in that browser.
 
+`--html --at <id>` opens the page with that definition picked, for a renderer
+that wants to hand you from its own view to this one: the id is the one `--json`
+gives it, `path#name`, or `path#Class.name` for a member.
+
 It is one self-contained file with the graph inside it, so it works offline and
 can be sent to someone. The same page (`share/view.html`) opened on its own takes
 a graph dropped or pasted onto it.

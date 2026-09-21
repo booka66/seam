@@ -1,6 +1,6 @@
 # md.jq: the graph as markdown, for a reader that is not a person with the page
 # open: an agent reviewing the change, a merge request description. Every
-# definition in the table's order with what happened to it, what it uses and
+# definition in reading order (share/order.jq) with what happened to it, what it uses and
 # what uses it, and, when seam has them kept, Claude's few words on it and the
 # callers outside the change. $gl is the gloss, [] when there is none.
 def kindword: if . == "tests" then " · test" elif . == "gen" then " · generated" elif . == "cfg" then " · config" else "" end;
@@ -12,12 +12,14 @@ def change: if . == "signature" then "~ signature changed" elif . == "body" then
 | (reduce $E[] as $e ({}; .[$e.from] += [$e])) as $out
 | (reduce $E[] as $e ({}; .[$e.to] += [$e])) as $into
 | (reduce (($g.callers // [])[]) as $c ({}; .[$c.to] += [$c])) as $calls
+| ([$g.reading.threads[][]] | to_entries | map({key: .value, value: .key}) | from_entries) as $at
 | "# \($g.rev // "The change"), by definition\n",
   (if $G and ($G.spine // "") != "" then "\($G.spine)\n" else empty end),
   (if $G and (($G.order // []) | length) > 0 then
      "Read first: " + ([$G.order[] | "\(.id) (\(.why))"] | join("; ")) + "\n" else empty end),
   "Every definition the change touches, in reading order. ~ is a changed signature: what names it may break. Body only: nothing outside it can. An entry point is one nothing else in the change mentions, where a reader starts. A newly used one (⇢) is a mention this change adds: rewiring, as against behaviour.\n",
-  ($g.definitions[]
+  "Read this way, at most \($g.reading.loose) mentions at once lead to a definition not yet read, with \($g.reading.hops) moves between files\(if ($g.reading.unmet | length) > 0 then "; read before anything that mentions them, where a circle left no way in: " + ($g.reading.unmet | join(", ")) else "" end).\n",
+  ($g.definitions | sort_by([$at[if .class then "\(.path)#\(.class)" else .id end], .class != null]) | .[]
    | . as $d
    | (($G.defs // {})[.id] // {}) as $q
    | "## \(.id)",

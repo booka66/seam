@@ -40,7 +40,12 @@ everything but its neighbours dims.
 
 The **reading order** (`g`): the same change as numbered threads, each read top
 to bottom, the connector between two rows saying whether the mention was in a
-signature or in a body. Every definition has a tick, every thread a progress bar,
+signature or in a body. A mention of a definition not read yet is a loose end,
+something to keep in mind, and each step takes whatever leaves the fewest
+loose; on a tie, what the last definition read mentions before what an earlier
+one does, then a signature mention before a body one. The page says how many that is at the worst point, and
+`--json` carries the order as `reading` (`share/order.jq` has the rules). Every
+definition has a tick, every thread a progress bar,
 and `space` marks one read and moves on — read state is per definition, not per
 file, and lives in that browser.
 
@@ -387,8 +392,8 @@ with when none is named; see *Splitting a branch*.
 
 ## The table
 
-One row a definition, in reading order, members right after their class, tab
-separated:
+One row a definition, entry points first and then by file and line, members
+right after their class, tab separated:
 
 ```
 path  kind  name  class  exported  change  side  start  end  open line

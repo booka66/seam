@@ -332,7 +332,8 @@ graph() {
   cf=$(cachefile callers "$1"); [ -s "$cf" ] || cf=/dev/null
   jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
     --rawfile kinds "$1.kinds" --rawfile refs "$1.refs" -f "$share/graph.jq" < "$1" |
-    jq -c --slurpfile c "$cf" 'if ($c | length) > 0 then .callers = $c[0] else . end'
+    jq -c --slurpfile c "$cf" 'if ($c | length) > 0 then .callers = $c[0] else . end' |
+    jq -c -f "$share/order.jq"
 }
 
 # cachefile <kind> <table>: where seam keeps what it asked something slow, in

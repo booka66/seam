@@ -199,6 +199,7 @@
   .head-line { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
   .head-line h2 { font-family: var(--display); font-weight: 400; font-size: 22px; margin: 0; }
   .head-line p { margin: 0; font-size: 12.5px; color: var(--dim); }
+  .head-line .carry { flex-basis: 100%; }
   .thread { border: 1px solid var(--line); border-radius: 12px; background: var(--sunk); margin-bottom: 12px; overflow: hidden; }
   .thread > .top { display: flex; align-items: center; gap: 12px; padding: 11px 14px; background: var(--panel); cursor: pointer; }
   .thread.open > .top { border-bottom: 1px solid var(--rule); }
@@ -499,6 +500,9 @@
       (into[e.to] = into[e.to] || []).push(e);
     });
     var tops = defs.filter(function (d) { return !d.class; });
+    // The order to read in (share/order.jq). A graph from before seam had one
+    // reads in the table's.
+    var reading = g.reading || { threads: tops.map(function (d) { return [d.id]; }), unmet: [], loose: 0 };
 
     // What you have read, kept for this change in this browser alone. A viewer
     // that marks a whole file read because you read one function in it is
@@ -1329,40 +1333,44 @@
     }
 
     // ---------- reading order ----------
-    function threadOf(root) {
-      var rows = [], seen = {};
-      (function walk(d, depth, edge) {
-        if (seen[d.id]) return;
-        seen[d.id] = 1;
-        rows.push({ def: d, depth: depth, edge: edge });
-        (members[d.id] || []).forEach(function (m) {
-          if (shown(m)) rows.push({ def: m, depth: depth + 1, edge: null });
+    // The threads as seam ordered them (share/order.jq), each row under the
+    // latest one above it that mentions it.
+    function rowsOf(ids) {
+      var rows = [], depth = {}, seen = [];
+      ids.forEach(function (id) {
+        var d = byId[id];
+        if (!d || !shown(d)) return;
+        var edge = null;
+        for (var k = seen.length - 1; k >= 0 && !edge; k--) {
+          edge = (out[seen[k]] || []).filter(function (e) { return e.to === id; })[0] || null;
+        }
+        depth[id] = edge ? depth[edge.from] + 1 : 0;
+        seen.push(id);
+        rows.push({ def: d, depth: depth[id], edge: edge });
+        (members[id] || []).forEach(function (m) {
+          if (shown(m)) rows.push({ def: m, depth: depth[id] + 1, edge: null });
         });
-        (out[d.id] || []).forEach(function (e) {
-          var t = byId[e.to];
-          if (t && shown(t)) walk(t, depth + 1, e);
-        });
-      })(root, 0, null);
+      });
       return rows;
-    }
-    function threadRoots() {
-      return tops.filter(function (d) { return d.root && shown(d) && (out[d.id] || []).length; })
-        .sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : (a.start || 0) - (b.start || 0); });
     }
 
     function drawReading() {
       stage.textContent = "";
       var wrap = h("div"); wrap.id = "reading";
-      var threads = threadRoots().map(threadOf);
-      var placed = {};
-      threads.forEach(function (t) { t.forEach(function (r) { placed[r.def.id] = 1; }); });
-      var loose = tops.filter(function (d) { return shown(d) && !placed[d.id]; });
+      var threads = reading.threads.filter(function (t) { return t.length > 1; }).map(rowsOf)
+        .filter(function (rows) { return rows.length; });
+      var loose = [].concat.apply([], reading.threads.filter(function (t) { return t.length === 1; }))
+        .map(function (id) { return byId[id]; }).filter(function (d) { return d && shown(d); });
 
       var line = h("div", "head-line");
       line.appendChild(h("h2", null, threads.length === 1 ? "One thread" : count(threads.length) + " threads"));
       line.appendChild(h("p", null, threads.length > 1
         ? "nothing makes you read them together, so they are numbered and kept apart"
         : "read it top to bottom: each row is what the one above it uses"));
+      line.appendChild(h("p", "carry", "read in this order, at most " + reading.loose + " loose end" +
+        (reading.loose === 1 ? "" : "s") + " at once — a mention of a definition not yet read" +
+        (reading.unmet.length ? " · " + reading.unmet.length + " read before anything that mentions " +
+          (reading.unmet.length === 1 ? "it" : "them") + ", where a circle left no way in" : "")));
       wrap.appendChild(line);
 
       threads.forEach(function (rows, n) {
@@ -1388,8 +1396,8 @@
 
       if (loose.length) {
         wrap.appendChild(rule(loose.length === 1
-          ? "One on its own — nothing else changed touches it"
-          : loose.length + " on their own — nothing else changed touches them"));
+          ? "One on its own — nothing else of its kind that changed touches it"
+          : loose.length + " on their own — nothing else of their kind that changed touches them"));
         var lb = h("div", "thread open");
         var ll = h("div", "rows");
         loose.forEach(function (d) { ll.appendChild(readingRow({ def: d, depth: 0, edge: null }, true)); });
@@ -1942,10 +1950,7 @@
     }
     function readingOrder() {
       var ids = [];
-      threadRoots().forEach(function (r) {
-        threadOf(r).forEach(function (x) { if (ids.indexOf(x.def.id) < 0) ids.push(x.def.id); });
-      });
-      tops.forEach(function (d) { if (shown(d) && ids.indexOf(d.id) < 0) ids.push(d.id); });
+      reading.threads.forEach(function (t) { rowsOf(t).forEach(function (r) { ids.push(r.def.id); }); });
       return ids;
     }
     function markAndAdvance() {

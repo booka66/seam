@@ -555,6 +555,23 @@ expect split/first-wants-a-pattern "$(seam "$fsbase..$fshead" --split --first 2>
 cd "$tmp" || exit 1
 cd "$tmp" || exit 1
 
+# --- the reading order (share/order.jq), on graphs built by hand: each word
+# is from>to, a mention of to in from, with :i when it is in the signature.
+order() {
+  printf '%s\n' "$@" | jq -R -s -c '
+    [split("\n")[] | select(length > 0) | capture("^(?<from>[^>]+)>(?<to>[^:]+)(?<i>:i)?$")] as $e
+    | {definitions: [[$e[] | .from, .to] | unique | .[] | {id: ("a.ts#" + .), path: "a.ts", name: ., box: {kind: "source"}}],
+       edges: [$e[] | {from: ("a.ts#" + .from), to: ("a.ts#" + .to), facet: (if .i then "iface" else "body" end)}]}' |
+    jq -f "$root/share/order.jq" |
+    jq -r '.reading | def n: sub("^a.ts#"; ""); "\([.threads[][] | n] | join(" ")) / \(.loose) / \([.unmet[] | n] | join(" "))"'
+}
+expect order/ends-before-threads "$(order 'A>B' 'A>C' 'A>D' 'B>E')" "A C D B E / 3 / "
+expect order/signature-first "$(order 'A>B' 'A>C:i')" "A C B / 2 / "
+expect order/the-last-thread-goes-on "$(order 'A>B' 'A>C' 'B>D' 'C>F' 'D>E')" "A B D E C F / 2 / "
+expect order/a-circle "$(order 'B>C' 'C>B' 'C>D')" "B C D / 1 / B"
+expect order/the-circle-in-front "$(order 'X>Y' 'Y>X' 'Y>B' 'B>C' 'C>B')" "X Y B C / 1 / X"
+expect order/in-md "$(seam "$base..$head" --md | grep -c '^Read this way, at most')" "1"
+
 # --- the language files
 expect lang/languages "$(seam --languages)" "$(printf 'python.yml\t.py .pyi\tpython\nrust.yml\t.rs\trust\ntypescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "41"

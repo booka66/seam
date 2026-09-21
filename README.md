@@ -289,18 +289,22 @@ on someone else's MR. seam blames every changed line on the commit that made
 it (`git blame`, and `--reverse` for a line taken out) and reads those commits
 three ways:
 
-- A definition lands no earlier than the commit most of its lines came from,
-  nor than anything it mentions. So a story the author built over two commits
-  is two slices in their order, and a dependency seam has no edge for — a field
-  read in one definition and added in another, which neither names — holds,
-  because the commit that reads it came after the one that added it.
+- A definition lands at the first commit that touched it, or after anything
+  it newly mentions. So a story the author built over two commits is two
+  slices in their order, and a dependency seam has no edge for — a field read
+  in one definition and added in another, which neither names — holds,
+  because the commit that reads it came after the one that added it. A
+  mention the base already had holds nothing back: the author's commit built
+  without the change to what it names, and the check says when it did not.
+  A later fixup to a definition does not drag what uses it along.
 - Stories nothing connects go in commit order, not by size.
 - A file nothing else places goes with its commit's slice, before the
   directory rule.
 
-A slice and a commit that are each other's main source share the commit's
-message, subject and body, so a stack that mirrors the branch needs no
-rewording. A fuse drops it, since the slice is then more than that commit. One
+A slice that holds all of a commit, and mostly that commit, says what the
+commit said, subject and body, so a stack that mirrors the branch needs no
+rewording. A commit that went to two slices is claimed by neither, since its
+message would describe code one of them does not have. A fuse drops it, since the slice is then more than that commit. One
 commit, or the worktree, says none of this and the plan is what it was.
 
 ## Extending it
@@ -377,8 +381,9 @@ wants and the table carries only what it did to a definition. `note` is why it i
 asking something that can compile — *this caller no longer compiles* is worth
 more than *this caller exists*.
 
-seam ships one, `references/typescript`: for each file whose only change is its
-imports, which changed definition those imports name, matched by the name and
+seam ships one, `references/typescript`: for each file seam read no
+definitions from, which changed definition its changed import statements name
+(an import the change left alone places nothing), matched by the name and
 the module's last path segment together. It reads nothing but git, errs
 towards a coarser split rather than a wrong one, and a compiler would do
 better, which is what replacing it is for. A file of the same name that is not

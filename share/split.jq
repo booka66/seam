@@ -35,15 +35,18 @@
 # A branch of more than one commit has already been split once, by someone who
 # knew what the diff cannot say: which part is a fix to ship now and which
 # waits on another MR. Its commits ($history, from seam's history) are read
-# three ways. Every definition lands no earlier than the commit most of its
-# lines came from, nor than anything it mentions, so a story the author built
-# over two commits is two slices, in their order — and a dependency seam has no
-# edge for (a field read here and added there) is kept, because the commit that
-# reads it came after. Stories that nothing connects go in commit order rather
-# than by size. A file nothing else places goes with the slice its commit is
-# in. And a slice and a commit that are each other's main source share the
-# commit's message, since the author already wrote it. One commit says none of
-# this, and the plan is what it would have been.
+# three ways. Every definition lands at the first commit that touched it, or
+# after anything it newly mentions, so a story the author built over two
+# commits is two slices, in their order — and a dependency seam has no edge
+# for (a field read here and added there) is kept, because the commit that
+# reads it came after. A mention the base already had is no reason to wait:
+# the author's commit built without the change to what it names, and the
+# check is there to say when it did not. Stories that nothing connects go in
+# commit order rather than by size. A file nothing else places goes with the
+# slice its commit is in. And a slice that holds all of a commit, and mostly
+# that commit, says what the commit said, since the author already wrote it
+# and it is true of the slice. One commit says none of this, and the plan is
+# what it would have been.
 
 # A piece worth cutting has at least this many definitions, and a cut has to
 # leave at least two stories behind while taking no more than half the piece.
@@ -92,12 +95,16 @@ def reach($start; $out; $in):
       | reduce (($out[$x]) // [])[] as $y (.; if .seen[$y] or ($in[$y] | not) then . else .seen[$y] = true | .q += [$y] end))
   | .seen | keys;
 def stories($ps): [$ps[] | select(length >= 2)];
-# The commit most of a {commit: lines} came from, the later on a tie; 0 for
-# none.
-def dominant: to_entries | if length == 0 then 0 else (max_by([.value, (.key | tonumber)]).key | tonumber) end;
+# The first commit in a {commit: lines}, 0 for none. The first, not the one
+# with the most lines: what reads a field needs it from the commit that added
+# it, and a later fixup to the same definition should not drag every user of
+# it along. The definition lands whole, at its final text, and landing more of
+# it early is what additions tolerate.
+def earliest: keys | map(tonumber) | min // 0;
 # When each definition in $C can land: its own commit ($own), or the latest of
-# anything it mentions, whichever is later. One seam has no commit for (a line
-# no blame reached) is as early as the piece allows, so it drags nothing late.
+# anything it newly mentions, whichever is later. One seam has no commit for
+# (a line no blame reached) is as early as the piece allows, so it drags
+# nothing late.
 def settle($C; $in; $own; $out):
   ([$C[] | $own[.] // 0 | select(. > 0)] | min // 0) as $floor
   | {e: ($C | map({key: ., value: (($own[.] // 0) | if . == 0 then $floor else . end)}) | from_entries), moved: true}
@@ -126,10 +133,12 @@ def tested:
 | ($D | map({key: .id, value: .}) | from_entries) as $byid
 | ($g.definitions | map({key: .id, value: canon}) | from_entries) as $canon
 | (($ARGS.named.history // [])[0] // {commits: [], defs: {}, files: {}}) as $H
-| ($H.defs | map_values(dominant)) as $own
+| ($H.defs | map_values(earliest)) as $own
 | ($g.edges | map([$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null)) | unique) as $E
 | (reduce $E[] as [$a, $b] ({}; .[$a] += [$b])) as $out
 | (reduce $E[] as [$a, $b] ({}; .[$b] += [$a])) as $into
+| (reduce ($g.edges[] | select(.new) | [$canon[.from], $canon[.to]] | select(.[0] != .[1] and .[0] != null and .[1] != null))
+     as [$a, $b] ({}; .[$a] += [$b])) as $outnew
 | ([$D[] | select(.box.kind == "source") | .id]) as $src
 # The foundation: cut the biggest pieces at the definition that breaks them
 # into the most stories, until no cut does.
@@ -152,7 +161,7 @@ def tested:
 # A piece is a story, or one a commit, when the branch's commits split it.
 | ([pieces($left; $E)[] | select(length >= 2) | . as $C
     | ($C | map({key: ., value: true}) | from_entries) as $inC
-    | settle($C; $inC; $own; $out) as $e
+    | settle($C; $inC; $own; $outnew) as $e
     | ($C | group_by($e[.]))[] | . as $P
     | ($P | map({key: ., value: true}) | from_entries) as $inP
     | map($byid[.]) as $defs
@@ -228,7 +237,7 @@ def tested:
           else (($p | tested) as $t
             | if $t != null and $t != $p and (($owners[$t] // []) | length) == 1
               then {path: $p, n: $owners[$t][0], shared: [], via: $t}
-              else (($H.files[$p] // {}) | dominant | tostring) as $c
+              else (($H.files[$p] // {}) | earliest | tostring) as $c
                 | if $atslot[$c] then {path: $p, n: $atslot[$c], shared: [], via: null}
                   else (($p | dir)) as $d
                   | (if $d == "" then null
@@ -314,8 +323,9 @@ def tested:
 | ($plan.shared | map(if .rest == ($ss | length) and ($slices | length) < ($ss | length)
                       then .rest = ($slices | length) else . end)) as $shared
 # The message a slice can take from the branch: a commit most of the slice's
-# lines came from, and that gave more of its lines to this slice than to any
-# other. Only one slice can be that, so a commit's message is never on two.
+# lines came from, and all of whose lines are in it. A message is a claim
+# about what the commit holds, and one that went partly elsewhere would claim
+# what the slice does not have; and only one slice can hold all of a commit.
 | ($shared | map({key: .path, value: true}) | from_entries) as $split
 | ($H.commits | map({key: (.n | tostring), value: {sha, subject}}) | from_entries) as $cm
 | ([$slices[] | . as $s
@@ -324,8 +334,8 @@ def tested:
     | (reduce (.[] | to_entries[]) as $x ({}; .[$x.key] += $x.value)) as $by
     | ($by | map(.) | add // 0) as $tot
     | $by | to_entries[] | {n: $s.n, c: .key, lines: .value, tot: $tot}]) as $pairs
-| ($pairs | group_by(.c) | map(max_by(.lines) | {key: .c, value: .n}) | from_entries) as $best
-| ($pairs | group_by(.n) | map(max_by(.lines) | select(.lines * 2 > .tot and $best[.c] == .n)
+| ($pairs | group_by(.c) | map({key: .[0].c, value: (map(.lines) | add)}) | from_entries) as $whole
+| ($pairs | group_by(.n) | map(max_by(.lines) | select(.lines * 2 > .tot and .lines == $whole[.c])
                             | {key: (.n | tostring), value: $cm[.c]}) | from_entries) as $msg
 | ($slices | map(if $msg[.n | tostring] then .commit = $msg[.n | tostring] else . end)) as $slices
 | if $fmt == "json" then

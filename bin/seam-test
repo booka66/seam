@@ -329,12 +329,29 @@ expect history/drawn "$(SEAM_COLOR=0 seam "$hsbase..$hshead" --split | grep -cE 
 seam "$hsbase..$hshead" --split --branch hcut > /dev/null 2>&1
 expect history/branch-message "$(git log -1 --format=%B hcut~1)" "$(git log -1 --format=%B "$hshead~1")"
 expect history/branch-tree "$(git diff --stat hcut "$hshead" | wc -l | tr -d ' ')" "0"
-# A later commit to what both halves name: neither can land before it, so
-# they are one slice again, and only mint, which names nothing, keeps its
-# commit's place.
+# A later commit to what both halves name drags neither of them: Draft lands
+# whole at the first commit that touched it, and send, which mentioned it
+# before the branch did, needs nothing it did not have.
 printf 'export interface Draft {\n  id: string;\n  codes?: string[];\n  at?: number;\n}\n' > draft.ts
 git add . && git commit -qm 'Date the draft' && hslate=$(git rev-parse HEAD)
-expect history/later-hub-joins "$(seam "$hsbase..$hslate" --split --json | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "mint / Draft,make,send"
+expect history/later-fixup-drags-nothing "$(seam "$hsbase..$hslate" --split --json | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "Draft,send / make,mint"
+# A commit two slices share is claimed by neither: its message would say what
+# one of them does not hold. Two stories from one commit, and a second commit
+# that is all of the last slice.
+hw=$tmp/hw
+mkdir "$hw" && cd "$hw" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export function a1(): number {\n  return a2();\n}\nexport function a2(): number {\n  return 1;\n}\n' > a.ts
+printf 'export function b1(): number {\n  return b2();\n}\nexport function b2(): number {\n  return 1;\n}\n' > b.ts
+printf 'notes\n' > notes.md
+git add . && git commit -qm base && hwbase=$(git rev-parse HEAD)
+printf 'export function a1(): number {\n  return a2() + 1;\n}\nexport function a2(): number {\n  return 2;\n}\n' > a.ts
+printf 'export function b1(): number {\n  return b2() + 1;\n}\nexport function b2(): number {\n  return 2;\n}\n' > b.ts
+git add . && git commit -qm 'Both halves'
+printf 'notes\nmore\n' > notes.md
+git add . && git commit -qm 'Only notes' && hwhead=$(git rev-parse HEAD)
+expect history/whole-commit-only "$(seam "$hwbase..$hwhead" --split --json | jq -r '[.slices[] | .commit.subject // "-"] | join(",")')" "-,-,Only notes"
+cd "$hs" || exit 1
 cd "$tmp" || exit 1
 
 # --- references from outside what seam can see. An edge here is a name inside
@@ -372,6 +389,19 @@ rm -rf .seam
 # The TypeScript import provider seam ships finds the same thing by itself,
 # and a file of its name that runs nothing turns it off.
 expect refs/shipped-typescript "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '[.references[] | select(.via == "typescript") | .from] | unique | join(" ")')" "one.ts use.ts"
+# An import the change did not touch places nothing: a file that only gained
+# a line of its own still imports what it did at the base, and built there.
+ru=$tmp/ru
+mkdir "$ru" && cd "$ru" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export const Mode = { A: "a" };\n' > mode.ts
+printf 'import { Mode } from "./mode";\nconsole.log(Mode.A);\n' > same.ts
+git add -A && git commit -qm base && rubase=$(git rev-parse HEAD)
+printf 'export const Mode = { A: "a", B: "b" };\n' > mode.ts
+printf 'import { Mode } from "./mode";\nconsole.log(Mode.A, 1);\n' > same.ts
+git add -A && git commit -qm head && ruhead=$(git rev-parse HEAD)
+expect refs/unchanged-import "$(XDG_CONFIG_HOME=$tmp/bare seam "$rubase..$ruhead" --json | jq -r '.references | length')" "0"
+cd "$rf" || exit 1
 mkdir -p .seam/references && : > .seam/references/typescript
 expect refs/shipped-turned-off "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "0"
 rm -rf .seam

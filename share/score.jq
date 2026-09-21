@@ -24,6 +24,9 @@
 #   spread    files and directories the change touches at all.
 #   safe      definitions whose body changed and nothing else, which nothing
 #             outside them can break. Never rated: it is the good news.
+#   breaks    callers outside the change that it breaks, from a lazy provider
+#             (seam --callers), once one has been asked. Any at all is bad:
+#             it is the one line here that is a bug and not a burden.
 
 def rate($n; $look; $bad): if $n >= $bad then 2 elif $n >= $look then 1 else 0 end;
 # A row: name, value, rating, what it counts, what to do, then the number and
@@ -95,9 +98,18 @@ def plural($n; $one; $many): if $n == 1 then $one else $many end;
     row("safe"; (($safe | length) | tostring) + " of " + ($n | tostring) + " body only"; 0; 1000000; 2000000;
       "nothing outside them can break because of them";
       "")
-  ] as $rows
+  ] + (if $g.callers == null then [] else
+      ($g.callers | map(select(.breaks))) as $broken
+      | ($broken | map(.from) | unique) as $bf
+      | [row("breaks"; (($bf | length) | tostring) + " of " + (($g.callers | map(.from) | unique | length) | tostring) + " callers outside";
+          ($bf | length); 1; 1;
+          "callers the change did not touch that it breaks";
+          "Breaks " + ($bf[:3] | map(sub("^.*#"; "")) | join(", ")) + (if ($bf | length) > 3 then " and " + (($bf | length) - 3 | tostring) + " more" else "" end)
+            + ". Fix them in this change, or say why they are fine.")]
+    end) as $rows
 | ([$rows[] | .[2]] | max) as $worst
-| (if $worst == 2 then "hard to review as one change"
+| (if any($rows[]; .[0] == "breaks" and .[2] == 2) then "breaks callers outside it"
+   elif $worst == 2 then "hard to review as one change"
    elif $worst == 1 then "worth reading in an order"
    else "reads as one thing" end) as $verdict
 | if $fmt == "json" then

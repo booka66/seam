@@ -30,6 +30,10 @@ trap 'rm -rf "$tmp"' EXIT
 XDG_CONFIG_HOME=$tmp/noconfig
 export XDG_CONFIG_HOME
 mkdir -p "$XDG_CONFIG_HOME"
+# The TypeScript import provider seam ships is off for all but its own tests,
+# the way a repo turns one off: a file of its name that runs nothing. The
+# fixtures below are about what seam sees by itself.
+mkdir -p "$XDG_CONFIG_HOME/seam/references" && : > "$XDG_CONFIG_HOME/seam/references/typescript"
 cd "$tmp" || exit 1
 git init -q .; git config user.email t@t; git config user.name t
 
@@ -321,6 +325,48 @@ expect refs/no-longer-refuses "$(seam "$rfbase..$rfhead" --split --branch b 2>&1
 printf '#!/bin/sh\nexit 3\n' > .seam/references/broken; chmod +x .seam/references/broken
 expect refs/a-broken-one-is-quiet "$(seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "1"
 rm -rf .seam
+# The TypeScript import provider seam ships finds the same thing by itself,
+# and a file of its name that runs nothing turns it off.
+expect refs/shipped-typescript "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '[.references[] | select(.via == "typescript") | .from] | unique | join(" ")')" "one.ts use.ts"
+mkdir -p .seam/references && : > .seam/references/typescript
+expect refs/shipped-turned-off "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "0"
+rm -rf .seam
+# A lazy provider is never run while reading: --callers runs it, keeps what it
+# said by the two commits, and the graph, the score and --md carry it from then.
+mkdir -p .seam/references
+printf '#!/bin/sh\n#seam: lazy\ncat >/dev/null\nprintf "far.ts#caller\\tuse.ts#pick\\tbody\\tTS2554: Expected 1 arguments\\t9\\t1\\n"\nprintf "ok.ts#fine\\tuse.ts#pick\\tbody\\t\\t3\\t\\n"\n' > .seam/references/slow
+chmod +x .seam/references/slow
+expect callers/not-while-reading "$(seam "$rfbase..$rfhead" --json | jq -r '(.references | length), (.callers // "none")' | tr '\n' ' ')" "0 none "
+expect callers/asked "$(seam "$rfbase..$rfhead" --callers | jq -r '.[] | "\(.from) \(.to) \(.line) \(.breaks) \(.via)"' | tr '\n' ';')" "far.ts#caller use.ts#pick 9 true slow;ok.ts#fine use.ts#pick 3 false slow;"
+expect callers/kept "$(seam "$rfbase..$rfhead" --json | jq -r '.callers | length')" "2"
+expect callers/scored "$(seam "$rfbase..$rfhead" --score --brief)" "breaks callers outside it · breaks 1"
+expect callers/in-md "$(seam "$rfbase..$rfhead" --md | grep -c '✗ caller (far.ts:9) — TS2554')" "1"
+expect callers/on-the-page "$(seam "$rfbase..$rfhead" --html | sed -n '/id="seam-data"/s/.*application\/json">//p' | sed 's|<\\/|</|g' | jq -r '.callers | length')" "2"
+if [ -n "$chrome" ] && [ -x "$chrome" ]; then
+  seam "$rfbase..$rfhead" --html > "$tmp/callers.html"
+  "$chrome" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom "file://$tmp/callers.html" > "$tmp/cdom.html" 2>/dev/null
+  expect page/draws-breaks-badge "$(grep -c '>breaks 1</text>' "$tmp/cdom.html")" "1"
+  expect page/draws-breaks-list "$(grep -c '>Breaks outside the change<' "$tmp/cdom.html")" "1"
+  expect page/callers-no-error "$(grep -o '<b>The page could not draw[^<]*' "$tmp/cdom.html" | wc -l | tr -d ' ')" "0"
+fi
+# One that fails is asked again next time rather than kept as having found nothing.
+rm -rf "$(git rev-parse --git-common-dir)/seam-callers"
+printf '#!/bin/sh\n#seam: lazy\nexit 1\n' > .seam/references/down; chmod +x .seam/references/down
+seam "$rfbase..$rfhead" --callers >/dev/null 2>&1
+expect callers/failed-not-kept "$(ls "$(git rev-parse --git-common-dir)/seam-callers" 2>/dev/null | wc -l | tr -d ' ')" "0"
+rm -rf .seam "$(git rev-parse --git-common-dir)/seam-callers"
+# A tool built on seam brings its own in a directory of SEAM_PATH, read after
+# the repo's and this user's: here a kinds command and a provider, and a spaced
+# path, since a directory may have one.
+mkdir -p "$tmp/a tool/references"
+printf '#!/bin/sh\nsed "s/$/\\tcfg/"\n' > "$tmp/a tool/kinds" && chmod +x "$tmp/a tool/kinds"
+printf '#!/bin/sh\nprintf "one.ts\\tgen.ts#Mode\\tiface\\tfrom the tool\\n"\n' > "$tmp/a tool/references/tool" && chmod +x "$tmp/a tool/references/tool"
+expect path/kinds "$(SEAM_PATH="$tmp/nowhere:$tmp/a tool" seam "$rfbase..$rfhead" --json | jq -r '[.definitions[].box.kind] | unique | join(" ")')" "cfg"
+expect path/references "$(SEAM_PATH="$tmp/a tool" seam "$rfbase..$rfhead" --json | jq -r '.references[] | select(.via == "tool") | .note')" "from the tool"
+# What a file is, from an executable .seam/kinds, the way SEAM_KINDS says it.
+mkdir -p .seam && printf '#!/bin/sh\nsed "s/$/\\tgen/"\n' > .seam/kinds && chmod +x .seam/kinds
+expect kinds/from-the-repo "$(seam "$rfbase..$rfhead" --json | jq -r '[.definitions[].box.kind] | unique | join(" ")')" "gen"
+rm -rf .seam
 cd "$tmp" || exit 1
 
 # --- the rest, when there is almost nothing in it. It is never a story, so
@@ -489,6 +535,12 @@ expect split/check-rc "$(printf '%s' "$ckout" | tail -1)" "rc=1"
 expect split/check-no-branch "$(git show-ref --verify -q refs/heads/ck3 && echo yes || echo no)" "no"
 # The check sees the commit it is on, and nothing of the worktree it was run from.
 expect split/check-sees-the-commit "$(seam "$smhead..$smtwo" --split --branch ck4 --check 'test "$SEAM_SLICE" -le "$SEAM_SLICES" && git rev-parse HEAD > /dev/null' >/dev/null 2>&1; echo "rc=$?")" "rc=0"
+# The check --branch runs when none is named is the repo's, in .seam/check;
+# --check '' is none.
+mkdir -p .seam && printf '# a comment\nfalse\n' > .seam/check
+expect split/check-from-the-repo "$(seam "$smhead..$smtwo" --split --branch ck5 >/dev/null 2>&1; echo "rc=$?")" "rc=1"
+expect split/check-none-named "$(seam "$smhead..$smtwo" --split --branch ck6 --check '' >/dev/null 2>&1; echo "rc=$?")" "rc=0"
+rm -f .seam/check
 expect split/check-wants-a-command "$(seam "$smhead..$smtwo" --split --check 2>&1; echo "rc=$?")" "$(printf 'seam: --check wants a command\nrc=2')"
 
 cd "$tmp" || exit 1

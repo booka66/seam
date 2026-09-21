@@ -5,6 +5,10 @@
 # seam <rev> --gloss      Claude's few words on each definition, as json, for
 #                         the page and any other renderer (see gloss below)
 # seam <rev> --html --gloss   the page with them, for this run alone
+# seam <rev> --md         the change by definition as markdown, for an agent or
+#                         a description, with the notes and callers kept
+# seam <rev> --callers    what the lazy providers find outside the change, as
+#                         json (see refs below); the page asks for it itself
 # seam <rev> --score      what makes the change hard to read, and how hard
 # seam <rev> --score --brief          the same in one line, for a footer
 # seam <rev> --score --table <file>   from a table already built, without
@@ -73,10 +77,22 @@ case $1 in
     case $2 in hunks) cat "$share/hunks.awk"; exit 0 ;; *) echo "seam --awk hunks" >&2; exit 2 ;; esac ;;
 esac
 
-# The language files, nearest first: a repo's own, then this user's, then the
-# ones seam ships, with the first of a name winning.
+# Where seam looks for what a repo tells it, nearest first: the repo's ./.seam,
+# this user's, then each directory in SEAM_PATH (colon separated), which is how
+# a tool built on seam brings its own without writing into either; and last,
+# for languages and references, the ones seam ships. A line each, and IFS set
+# to a newline only for the list a loop walks, so a path may have spaces.
+nl='
+'
+ifs=$IFS
+seamdirs="./.seam$nl${XDG_CONFIG_HOME:-$HOME/.config}/seam$(printf '%s' "${SEAM_PATH:-}" | awk -v RS=: 'NF { printf "\n%s", $0 }')"
+
+# The language files, with the first of a name winning.
 langfiles= seen=
-for d in ./.seam/languages "${XDG_CONFIG_HOME:-$HOME/.config}/seam/languages" "$share/languages"; do
+IFS=$nl
+for d in $seamdirs$nl$share; do
+  IFS=$ifs
+  d=$d/languages
   [ -d "$d" ] || continue
   for f in "$d"/*.yml; do
     [ -f "$f" ] || continue
@@ -112,10 +128,24 @@ langs() {
 # Which paths to parse at all: everything else lists as a file. A character
 # class rather than \. so the regex survives being passed to awk as a string.
 extre="[.]($(for f in $langfiles; do lang_field "$f" extensions; done | sed 's/^\.//' | sort -u | tr '\n' '|' | sed 's/|$//'))$"
-# What a file is (share/kinds.awk), unless the repo knows better: SEAM_KINDS is
-# a command reading paths on stdin and writing each back with a tab and its
-# kind. otis passes its own, which also reads what .gitattributes declares.
-kinds="${SEAM_KINDS:-awk -f $share/kinds.awk}"
+# What a file is (share/kinds.awk), unless the repo knows better: a kinds
+# command, found the way the language files are (an executable .seam/kinds,
+# then this user's), reading paths on stdin and writing each back with a tab
+# and its kind. SEAM_KINDS names one for a single run, over both.
+kindsfile=
+if [ -z "$SEAM_KINDS" ]; then
+  IFS=$nl
+  for f in $seamdirs; do
+    IFS=$ifs
+    [ -f "$f/kinds" ] && [ -x "$f/kinds" ] && { kindsfile=$(cd "$f" && pwd)/kinds; break; }
+  done
+  IFS=$ifs
+fi
+kinds() {
+  if [ -n "$SEAM_KINDS" ]; then eval "$SEAM_KINDS"
+  elif [ -n "$kindsfile" ]; then "$kindsfile"
+  else awk -f "$share/kinds.awk"; fi
+}
 
 case $1 in
   --rules) rules; exit 0 ;;
@@ -126,20 +156,22 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= glossy= score= brief= table= split= branch= firstglobs= check= planout= want=
+rev= json= html= md= glossy= wantcallers= score= brief= table= split= branch= firstglobs= check= checkset= planout= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
     branch) branch=$a split=1 want=; continue ;;
     first) firstglobs="$firstglobs $a" want=; continue ;;
-    check) check=$a split=1 want=; continue ;;
+    check) check=$a checkset=1 split=1 want=; continue ;;
     planout) planout=$a split=1 want=; continue ;;
     mr) n=${a##*/-/merge_requests/} n=${n#!} rev="!${n%%[!0-9]*}" want=; continue ;;
   esac
   case $a in
     --json) json=1 ;;
     --html) html=1 ;;
+    --md) md=1 ;;
     --gloss) glossy=1 ;;
+    --callers) wantcallers=1 ;;
     --score) score=1 ;;
     --brief) brief=1 ;;
     --table) want=table ;;
@@ -163,6 +195,21 @@ case $want in
 esac
 [ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
 [ -n "$rev" ] || { sed -n '2,11p' "$0" | sed 's/^# //' >&2; exit 2; }
+# The check --branch runs when none is named: a command a line in .seam/check,
+# with check.local before it and this user's after, the way first is found.
+# --check '' is none at all.
+if [ -n "$branch" ] && [ -z "$checkset" ]; then
+  IFS=$nl
+  for d in $seamdirs; do
+    IFS=$ifs
+    for f in "$d/check.local" "$d/check"; do
+      [ -f "$f" ] || continue
+      check=$(sed 's/#.*//' "$f" | grep -v '^[[:space:]]*$' | head -1)
+      break 2
+    done
+  done
+  IFS=$ifs
+fi
 # base and head: the two trees. An end a range leaves out is HEAD, the way it
 # is for git itself, so main.. is main..HEAD; without that it read as an empty
 # head, which is how the worktree is said, and answered a different question
@@ -216,36 +263,104 @@ hunk_awk=$(cat "$share/hunks.awk")
 # are in the environment (SEAM_REV, SEAM_BASE, SEAM_HEAD), since what the
 # change did to a line is most of what a provider wants and the table carries
 # only what it did to a definition; SEAM_HEAD is empty for the worktree.
-refs() {
-  # Names of its own for the loop: sh has no locals, and page, split and the
-  # rest all run this in the middle of work that has its own f and n.
-  : > "$1.refs"
-  for refdir in ./.seam/references "${XDG_CONFIG_HOME:-$HOME/.config}/seam/references" "$share/references"; do
+#
+# A provider that says `#seam: lazy` in its first lines is one too slow to wait
+# for: a compiler finding every caller in a monorepo takes minutes. seam never
+# runs one while reading a change. seam <rev> --callers runs them, keeps what
+# they say by the two commits the way --gloss does, and the page, --json and
+# --score carry it from then on; --html starts them in the background and
+# fills them in when they land. Their rows are callers: something outside the
+# change (a definition, path#name, or a plain path) that names a changed one,
+# with two more columns, the line of the mention and 1 when the change breaks
+# it, since *this caller no longer compiles* is the point of asking. A row
+# whose to is - breaks without calling anything the change touched. They
+# never move a slice: a caller is not in the change.
+#
+# providers <eager|lazy>: each provider's path, the nearest of a name winning.
+# A file of that name that is not executable (an empty one will do) wins too,
+# and runs nothing: that is how a repo turns off one seam ships.
+# Names of its own for the loop: sh has no locals, and page, split and the
+# rest all run this in the middle of work that has its own f and n.
+providers() {
+  seenrefs=
+  IFS=$nl
+  for refdir in $seamdirs$nl$share; do
+    IFS=$ifs
+    refdir=$refdir/references
     [ -d "$refdir" ] || continue
     for reffile in "$refdir"/*; do
-      [ -x "$reffile" ] || continue
+      [ -f "$reffile" ] || continue
       refname=${reffile##*/}
       case " $seenrefs " in *" $refname "*) continue ;; esac
       seenrefs="$seenrefs $refname"
-      # A provider that fails says nothing rather than stopping the change
-      # being read: seam worked before it existed and works if it breaks.
-      SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null |
-        awk -F'\t' -v via="$refname" 'NF >= 2 && $1 != "" && $2 != "" {
-          print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
-        }' >> "$1.refs"
+      [ -x "$reffile" ] || continue
+      if head -n 20 "$reffile" 2>/dev/null | grep -q '^#seam: *lazy'; then
+        [ "$1" = lazy ] && printf '%s\n' "$reffile"
+      else
+        [ "$1" = eager ] && printf '%s\n' "$reffile"
+      fi
     done
   done
+}
+refs() {
+  : > "$1.refs"
+  providers eager > "$1.providers"
+  while read -r reffile; do
+    # A provider that fails says nothing rather than stopping the change
+    # being read: seam worked before it existed and works if it breaks.
+    SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null |
+      awk -F'\t' -v via="${reffile##*/}" 'NF >= 2 && $1 != "" && $2 != "" {
+        print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
+      }' >> "$1.refs"
+  done < "$1.providers"
 }
 
 # --json: the table as the graph, with the edges kept and each definition's box
 # named (share/graph.jq). The kinds are asked for again here rather than kept
 # from the build: it is one pass over the paths, and the table is the thing
 # every other reader wants.
+# The callers the lazy providers found go in too, when they are kept.
 graph() {
-  cut -f1 "$1" | sort -u | $kinds > "$1.kinds"
+  cut -f1 "$1" | sort -u | kinds > "$1.kinds"
   refs "$1"
+  cf=$(cachefile callers "$1"); [ -s "$cf" ] || cf=/dev/null
   jq -R -s --arg rev "$rev" --arg base "$base" --arg head "$head" \
-    --rawfile kinds "$1.kinds" --rawfile refs "$1.refs" -f "$share/graph.jq" < "$1"
+    --rawfile kinds "$1.kinds" --rawfile refs "$1.refs" -f "$share/graph.jq" < "$1" |
+    jq -c --slurpfile c "$cf" 'if ($c | length) > 0 then .callers = $c[0] else . end'
+}
+
+# cachefile <kind> <table>: where seam keeps what it asked something slow, in
+# the repo's git dir: a range by its two commits, which never change, and the
+# worktree by its table, so an edit asks again.
+cachefile() {
+  if [ -n "$head" ]; then key=$(git rev-parse "$base")-$(git rev-parse "$head"); else key=worktree-$(git hash-object "$2"); fi
+  printf '%s/seam-%s/%s.json\n' "$(git rev-parse --path-format=absolute --git-common-dir)" "$1" "$key"
+}
+# --callers: what the lazy providers say, run now and kept, as json. Kept only
+# when every one of them ran: a compiler that was not installed yet is asked
+# again next time rather than remembered as having found nothing.
+callers() {
+  file=$(cachefile callers "$1")
+  [ -s "$file" ] && { cat "$file"; return; }
+  providers lazy > "$tmp/lazy"
+  : > "$tmp/callers.tsv"
+  ok=1
+  while read -r reffile; do
+    SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" > "$tmp/lazy.out" 2>"$tmp/lazy.err" ||
+      { ok=; printf 'seam: %s failed: %s\n' "${reffile##*/}" "$(head -c 300 "$tmp/lazy.err" | tr '\n' ' ')" >&2; }
+    awk -F'\t' -v via="${reffile##*/}" 'NF >= 2 && $1 != "" && $2 != "" {
+        print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via "\t" $5 "\t" $6
+      }' "$tmp/lazy.out" >> "$tmp/callers.tsv"
+  done < "$tmp/lazy"
+  jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {from: .[0], to: .[1], facet: .[2],
+      note: (if (.[3] // "") == "" then null else .[3] end), via: .[4],
+      line: (if (.[5] // "") == "" then null else (.[5] | tonumber? // null) end), breaks: ((.[6] // "") == "1")})' \
+    < "$tmp/callers.tsv" > "$tmp/callers.json"
+  if [ -n "$ok" ] && [ -s "$tmp/lazy" ]; then mkdir -p "${file%/*}" && cp "$tmp/callers.json" "$file"; fi
+  cat "$tmp/callers.json"
+  # A provider that failed makes the whole answer unknown, not empty: the page
+  # then says it cannot tell rather than that nothing calls it.
+  [ -n "$ok" ]
 }
 
 # diffs: each definition's own patch, for a renderer that shows one. The whole
@@ -487,12 +602,16 @@ plan() {
   # first.local before first, this repo before this user: a repo that comes to
   # ship one of these should not silently take over yours, and yours is the
   # one thing here git is not meant to see.
-  for d in ./.seam/first.local ./.seam/first \
-           "${XDG_CONFIG_HOME:-$HOME/.config}/seam/first.local" "${XDG_CONFIG_HOME:-$HOME/.config}/seam/first"; do
-    [ -f "$d" ] || continue
-    globs="$globs $(sed 's/#.*//' "$d" | tr -s '[:space:]' ' ')"
-    break
+  IFS=$nl
+  for d in $seamdirs; do
+    IFS=$ifs
+    for f in "$d/first.local" "$d/first"; do
+      [ -f "$f" ] || continue
+      globs="$globs $(sed 's/#.*//' "$f" | tr -s '[:space:]' ' ')"
+      break 2
+    done
   done
+  IFS=$ifs
   : > "$tmp/first.paths"
   if [ -n "$(printf '%s' "$globs" | tr -d '[:space:]')" ]; then
     # In a subshell with pathname expansion off: the patterns are meant for
@@ -757,9 +876,10 @@ page() {
   printf '<script id="seam-data" type="application/json">'
   gf=$(glossfile "$1")
   [ -s "$gf" ] || gf=/dev/null
-  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" --slurpfile gl "$gf" --arg from "${2:-}" \
+  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" --slurpfile gl "$gf" --arg from "${2:-}" --arg cfrom "${3:-}" \
     '.definitions |= map(. + {diff: ($d[0][.id] // null)}) | .score = $s[0]
-     | if ($gl | length) > 0 then .gloss = $gl[0] elif $from != "" then .glossFrom = $from else . end' < "$tmp/graph.json" |
+     | if ($gl | length) > 0 then .gloss = $gl[0] elif $from != "" then .glossFrom = $from else . end
+     | if .callers == null and $cfrom != "" then .callersFrom = $cfrom else . end' < "$tmp/graph.json" |
     sed 's|</|<\\/|g'
   printf '</script>\n'
   awk 'f { print } /<!--SEAM DATA-->/ { f = 1 }' "$share/view.html"
@@ -775,10 +895,7 @@ page() {
 # diff cut to forty lines, and answers against a schema. Nothing is posted.
 # Kept by the two commits in the repo's git dir, since they never change; the
 # worktree's by its table, so an edit glosses again.
-glossfile() {
-  if [ -n "$head" ]; then key=$(git rev-parse "$base")-$(git rev-parse "$head"); else key=worktree-$(git hash-object "$1"); fi
-  printf '%s/seam-gloss/%s.json\n' "$(git rev-parse --path-format=absolute --git-common-dir)" "$key"
-}
+glossfile() { cachefile gloss "$1"; }
 glossmodel() { git config --get seam.glossModel || echo claude-haiku-4-5; }
 glosson() { [ "$(git config --bool --get seam.gloss)" = true ]; }
 gloss() {
@@ -794,7 +911,7 @@ gloss() {
   # enum of them, and the answer is mapped back.
   {
     cat <<'PROMPT'
-You are glossing a code change for a reviewer, who reads it one definition at a time. For each definition below, say two things. First, does: in at most ten words, what the definition itself does, as the change leaves it (as it was, for a removed one), as if the change did not matter: its job in the code, never a restatement of its name or signature ("resolves a return's refund amount from its items"). Second, gloss: in at most eight words, what THIS CHANGE does to it: the intent, not the mechanics. Lead with a verb where one fits ("retries on timeout instead of failing", "widens options with a batch size"). One only touched by wiring gets a plain gloss ("passes the new proxy through"); a new one says what the change adds it for, not what does already said. Where a definition says "newly uses", gloss each of those edges too, in at most eight words and lower case: what it now does with the one it uses ("passes the facts into the send result"). Then put the entry points (marked root) in the order a reader should take them, with one short sentence each on why that one comes first. Then the spine: one sentence, for a reviewer who has read nothing yet, on what the change introduces and why. Name each definition by its id, the s and number after ##, never by its name.
+You are glossing a code change for a reviewer, who reads it one definition at a time. For each definition below, say two things. First, does: in at most ten words, what the definition itself does, as the change leaves it (as it was, for a removed one), as if the change did not matter: its job in the code, never a restatement of its name or signature ("resolves a return's refund amount from its items"). Second, gloss: in at most eight words, what THIS CHANGE does to it: the intent, not the mechanics. Lead with a verb where one fits ("retries on timeout instead of failing", "widens options with a batch size"). One only touched by wiring gets a plain gloss ("passes the new proxy through"); a new one says what the change adds it for, not what does already said. Where a definition says "newly uses", gloss each of those edges too, in at most eight words and lower case: what it now does with the one it uses ("passes the facts into the send result"). Then put the entry points (marked root) in the order a reader should take them, with one short sentence each on why that one comes first. Then the spine: one sentence, for a reviewer who has read nothing yet, on what the change introduces and why. In the id fields, name each definition by its id, the s and number after ##; in the words you write, by its name, never by its id.
 
 PROMPT
     if [ -n "$head" ]; then printf 'The commits, newest first:\n'; git log --format='  %s' "$base..$head" 2>/dev/null | head -30
@@ -826,11 +943,13 @@ PROMPT
     { printf 'seam: Claude did not gloss this: %s\n' "$(head -c 300 "$tmp/answer.err" "$tmp/answer" | tr '\n' ' ')" >&2; return 1; }
   jq -c --arg model "$model" --slurpfile g "$tmp/graph.json" '
     ($g[0].definitions | map(.id)) as $m | def full: $m[.[1:] | tonumber - 1];
+    # An sN that slipped into the words is put back as the name it stands for.
+    def named: gsub("\\bs(?<n>[0-9]+)\\b"; (.n | tonumber) as $k | if $k >= 1 and $k <= ($m | length) then $m[$k - 1] | sub("^[^#]*#"; "") else "s\(.n)" end);
     .structured_output as $o
-    | {model: $model, spine: $o.spine,
-       defs: ($o.symbols | map({key: (.id | full), value: {does, gloss}}) | from_entries),
-       order: ($o.order | map({id: (.id | full), why})),
-       edges: ($o.edges | map({key: "\(.from | full)>\(.to | full)", value: .gloss}) | from_entries)}' "$tmp/answer" > "$file.new" &&
+    | {model: $model, spine: ($o.spine | named),
+       defs: ($o.symbols | map({key: (.id | full), value: {does: (.does | named), gloss: (.gloss | named)}}) | from_entries),
+       order: ($o.order | map({id: (.id | full), why: (.why | named)})),
+       edges: ($o.edges | map({key: "\(.from | full)>\(.to | full)", value: (.gloss | named)}) | from_entries)}' "$tmp/answer" > "$file.new" &&
     mv "$file.new" "$file" && cat "$file"
 }
 
@@ -918,7 +1037,7 @@ build() {
   # to themselves, since a spec mentions everything it tests and a codegen
   # dump mentions everything, and neither should pull a source symbol off
   # the top level.
-  cat "$tmp/new.paths" "$tmp/old.paths" | sort -u | $kinds > "$tmp/kinds"
+  cat "$tmp/new.paths" "$tmp/old.paths" | sort -u | kinds > "$tmp/kinds"
   : > "$tmp/hunks"
   if [ -n "$head" ]; then
     cat "$tmp/new.paths" "$tmp/old.paths" | sort -u | tr '\n' '\0' | xargs -0 git diff -U0 --no-renames "$base" "$head" -- > "$tmp/hunks" 2>/dev/null
@@ -1257,32 +1376,48 @@ if [ -n "$html" ]; then
   if [ -t 1 ]; then
     pagefile=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
     pagefile=$(printf '%s' "$pagefile" | sed 's|//*|/|g')
-    # The page never waits for Claude: glossing on (or --gloss asked for it
-    # this once) and none kept already, it opens at once and asks for this
-    # file until a seam of its own, started here in the background, writes it.
-    glossjs=${pagefile%.html}.gloss.js
-    rm -f "$glossjs"
-    later=
+    # The page never waits for anything slow. What is not kept already, it
+    # asks for from a file beside it until a seam of its own, started here in
+    # the background from the same table, writes it: the callers whenever a
+    # lazy provider is there, which reads nothing but this repo, and Claude's
+    # notes only when glossing is on or --gloss asked for them this once.
+    later() { # <flag> <what the page calls>
+      js=${pagefile%.html}.${1#--}.js
+      nohup sh -c 'g=$("$0" --table "$1" "$2" "$3" 2>"$4.err") && { printf "%s(%s)\n" "$5" "$g" > "$4.tmp"; rm -f "$4.err"; } || printf "%s(null)\n" "$5" > "$4.tmp"; mv "$4.tmp" "$4"' \
+        "$self" "$pagetable" "$rev" "$1" "$js" "$2" </dev/null >/dev/null 2>&1 &
+    }
+    pagetable=${pagefile%.html}.table
+    cp "$out" "$pagetable"
+    rm -f "${pagefile%.html}.gloss.js" "${pagefile%.html}.callers.js"
+    glater= clater=
     if [ ! -s "$(glossfile "$out")" ] && { [ -n "$glossy" ] || glosson; }; then
-      if command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}
+      if command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then glater=${pagefile##*/}; glater=${glater%.html}.gloss.js
       elif [ -n "$glossy" ]; then echo "seam: glossing wants Claude Code on the PATH" >&2; fi
     fi
-    page "$out" "$later" > "$pagefile" || exit 1
+    if [ ! -s "$(cachefile callers "$out")" ] && [ -n "$(providers lazy)" ]; then clater=${pagefile##*/}; clater=${clater%.html}.callers.js; fi
+    page "$out" "$glater" "$clater" > "$pagefile" || exit 1
     printf '%s\n' "$pagefile" >&2
-    if [ -n "$later" ]; then
-      nohup sh -c 'g=$("$0" "$1" --gloss 2>"$2.err") && { printf "seamGloss(%s)\n" "$g" > "$2.tmp"; rm -f "$2.err"; } || printf "seamGloss(null)\n" > "$2.tmp"; mv "$2.tmp" "$2"' \
-        "$self" "$rev" "$glossjs" </dev/null >/dev/null 2>&1 &
-    fi
+    [ -n "$glater" ] && later --gloss seamGloss
+    [ -n "$clater" ] && later --callers seamCallers
     if command -v open >/dev/null 2>&1; then open "$pagefile"
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$pagefile"
     fi
   else
-    # A pipe or a file has nothing to fill in later, so it waits for the notes.
+    # A pipe or a file has nothing to fill in later, so it waits for what it
+    # was asked for: the notes with --gloss or glossing on, the callers with
+    # --callers.
     if [ -n "$glossy" ] || glosson; then gloss "$out" >/dev/null || true; fi
+    [ -n "$wantcallers" ] && { callers "$out" >/dev/null || true; }
     page "$out"
   fi
 elif [ -n "$glossy" ]; then
   gloss "$out"
+elif [ -n "$md" ]; then
+  # What is kept, never waited for: --gloss and --callers first to have them.
+  gf=$(glossfile "$out"); [ -s "$gf" ] || gf=/dev/null
+  graph "$out" | jq -r --slurpfile gl "$gf" -f "$share/md.jq"
+elif [ -n "$wantcallers" ]; then
+  callers "$out"
 elif [ -n "$split" ]; then
   graph "$out" > "$tmp/graph.json"
   if [ -n "$branch" ]; then stack

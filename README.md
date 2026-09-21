@@ -14,6 +14,8 @@ seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through
 seam HEAD~..HEAD --gloss    Claude's few words on each definition, as json
+seam HEAD~..HEAD --callers  what a lazy provider finds outside the change, as json
+seam HEAD~..HEAD --md       the change by definition as markdown, for an agent
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam main...     --split    how to split it: one slice a story, each file placed
 seam main...     --split --branch cut   those slices as commits on a new branch
@@ -192,6 +194,10 @@ rather not stand in a worktree at all — asking a language server what the tree
 at that commit would say, from where the dependencies already are — has
 `SEAM_ROOT` and `SEAM_COMMIT` and needs nothing else.
 
+A repo names its check once, in `.seam/check` (a command, the first line that
+is not a comment), and `--branch` runs it without being told; `check.local` is
+read first and this user's after, the way `first` is. `--check ''` runs none.
+
 A file the change has no definitions in goes with the package it sits over: a
 BUILD file, a `package.json`, a `tsconfig` describes the code in its own
 directory, and the code is right there under it. Its own directory only, or a
@@ -269,9 +275,24 @@ stage one slice rather than commit it.
 
 ## Extending it
 
-Three kinds of file, looked for in `./.seam/`, then `$XDG_CONFIG_HOME/seam/`,
+seam stays small by asking the repo for everything it cannot know, and every
+question is a file: looked for in `./.seam/`, then `$XDG_CONFIG_HOME/seam/`,
 then the ones seam ships. A file of the same name nearer the front wins, so a
-repo can replace what seam ships without forking it.
+repo can replace what seam ships without forking it, and bring its own
+compiler, build graph or test runner without seam knowing what any of them are.
+`SEAM_PATH` is a colon-separated list of more directories laid out the same
+way, read after yours and before seam's own: that is how a tool built on seam
+brings its providers without writing into anyone's config (otis exports its
+`share/seam`).
+
+| file | what it answers | shape |
+|---|---|---|
+| `languages/<name>.yml` | what a definition is | ast-grep rules |
+| `references/<name>` | what names what, from outside what seam reads | a command: table in, rows out |
+| `references/<name>` with `#seam: lazy` | what calls the change from outside it, and what that breaks | the same, run in the background |
+| `kinds` | which files are tests, generated or config | a command: paths in, `path⇥kind` out |
+| `first` | what goes before everything in a split | path patterns |
+| `check` | whether a commit of the split stands up | a command |
 
 **`languages/<name>.yml`** — implemented. ast-grep rules, plus `#seam:` lines
 saying which extensions the language uses and which grammars to write the rules
@@ -326,21 +347,39 @@ wants and the table carries only what it did to a definition. `note` is why it i
 asking something that can compile — *this caller no longer compiles* is worth
 more than *this caller exists*.
 
- Inside the change seam finds edges itself. The
-references that matter most come from outside it and from things seam should
-never know about: a compiler, an HTTP route table, a build graph, a test name.
-Those belong to whoever has the repo. The contract will be a command reading the
-definition table on stdin and writing `from⇥to⇥facet⇥note` rows — `note` from the
-start, because a provider that can say *this caller no longer compiles* is worth
-more than one that can only say *this caller exists*.
+seam ships one, `references/typescript`: for each file whose only change is its
+imports, which changed definition those imports name, matched by the name and
+the module's last path segment together. It reads nothing but git, errs
+towards a coarser split rather than a wrong one, and a compiler would do
+better, which is what replacing it is for. A file of the same name that is not
+executable (an empty one will do) turns off the one seam ships.
+
+A provider whose first lines say `#seam: lazy` is one too slow to wait for, like
+a compiler finding every caller in a monorepo. seam never runs it while reading
+a change: `seam <rev> --callers` does, keeps what it says in the repo's git dir
+by the two commits, and from then on `--json`, `--score`, `--md` and the page
+all carry it. `--html` starts it in the background and fills it in on the open
+page when it lands; `--html --callers` into a file waits for it. Its rows are
+callers — something outside the change that names a changed definition — with
+two more columns: `from⇥to⇥facet⇥note⇥line⇥breaks`, where `line` is where
+the mention is and `breaks` is `1` when the change breaks it. A `to` of `-` is
+something the change breaks without it calling anything the change touched.
+The page lists them under the definition, a red *breaks* on its box, and the
+score gains a line: any caller the change breaks makes it *breaks callers
+outside it*. A lazy provider never moves a slice, since a caller is not in the
+change. One that fails is asked again next time rather than kept as having
+found nothing. otis ships one over tsgo.
 
 **`containers/<name>`** — not yet. A path in, a box id out, so a definition can
 sit in a package or a bazel target and not only a file.
 
-`SEAM_KINDS` already works this way today: a command reading paths on stdin and
-writing each back with its kind (`tests`, `gen`, `cfg`, or nothing for source).
-Without it seam uses `share/kinds.awk`. otis passes its own, which also reads
-what `.gitattributes` declares generated.
+**`kinds`** — implemented. An executable reading paths on stdin and writing each
+back with its kind (`tests`, `gen`, `cfg`, or nothing for source). Without one
+seam uses `share/kinds.awk`. `SEAM_KINDS` names a command for one run, over the
+file.
+
+**`check`** — implemented. The command `--split --branch` checks every commit
+with when none is named; see *Splitting a branch*.
 
 ## The table
 

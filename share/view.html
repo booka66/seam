@@ -328,6 +328,16 @@
   .starts .tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .starts .nm { font-family: var(--mono); }
   .starts .quip { font-size: 12px; }
+  .breaks rect { fill: var(--panel); stroke: var(--removed); rx: 8; }
+  .breaks text { font-family: var(--ui); font-size: 9.5px; fill: var(--removed); }
+  .sec .brk { margin-left: 8px; color: var(--removed); letter-spacing: .06em; }
+  .uses button.broken .g, .uses button.broken .nm { color: var(--removed); }
+  .carry-list .cnote { margin: -4px 0 6px 30px; }
+  .cnote { margin: -2px 0 4px 35px; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: pre-wrap; word-break: break-word; }
+  .cnote.breaks { color: var(--removed); }
+  .pop-where.breaks b { color: var(--removed); }
+  .outside:empty { display: none; }
+  .outside .far { font-family: var(--mono); text-transform: none; letter-spacing: 0; font-size: 11px; }
   .uses { padding: 0 12px; display: flex; flex-direction: column; gap: 1px; }
   .uses button { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
   .uses button:hover { background: var(--mark); }
@@ -537,7 +547,6 @@
       slots.forEach(fillQuip);
     }
     if (glossWaiting) {
-      var tries = 0;
       window.seamGloss = function (x) {
         if (!glossWaiting) return;
         gloss = x; glossWaiting = false;
@@ -546,14 +555,56 @@
         // and it has nothing open to lose.
         if (!state.sel) drawPanel();
       };
+      later(g.glossFrom, function () { return glossWaiting; }, function () { window.seamGloss(null); }, 120);
+    }
+    // later(src, still, giveUp, tries): ask for a file seam is writing beside
+    // the page, as a script, since a page opened from disk may load one but
+    // not fetch one, every second and a half until it has called back.
+    function later(src, still, giveUp, most) {
+      var tries = 0;
       (function ask() {
-        if (!glossWaiting) return;
-        if (++tries > 120) { window.seamGloss(null); return; }
+        if (!still()) return;
+        if (++tries > most) { giveUp(); return; }
         var sc = document.createElement("script");
-        sc.src = g.glossFrom + "?" + tries;
-        sc.onload = sc.onerror = function () { sc.remove(); if (glossWaiting) setTimeout(ask, 1500); };
+        sc.src = src + "?" + tries;
+        sc.onload = sc.onerror = function () { sc.remove(); if (still()) setTimeout(ask, 1500); };
         document.head.appendChild(sc);
       })();
+    }
+
+    // ---------- callers outside the change ----------
+    // What a lazy provider found (seam --callers): code the change did not
+    // touch that names a changed definition, and whether the change breaks it.
+    // Kept or on its way the way the notes are; a compiler finding callers in
+    // a monorepo can take minutes, so it is asked for for longer. Each place
+    // that shows them is a slot drawn again in place when they land.
+    var callers = g.callers || null, callersWaiting = !callers && !!g.callersFrom, callerSlots = [];
+    var callsTo = {};
+    function indexCallers() {
+      callsTo = {};
+      (callers || []).forEach(function (c) { (callsTo[c.to] = callsTo[c.to] || []).push(c); });
+    }
+    indexCallers();
+    function breaksOf(id) { return (callsTo[id] || []).filter(function (c) { return c.breaks; }).length; }
+    function callerSlot(draw) {
+      var sl = { n: h("div", "outside"), draw: draw };
+      callerSlots.push(sl);
+      draw(sl.n);
+      return sl.n;
+    }
+    function whoCalls(c) { return c.from.indexOf("#") >= 0 ? c.from.replace(/^[^#]*#/, "") : c.from.replace(/^.*\//, ""); }
+    function whereCalls(c) { return c.from.replace(/#.*$/, "") + (c.line ? ":" + c.line : ""); }
+    if (callersWaiting) {
+      window.seamCallers = function (x) {
+        if (!callersWaiting) return;
+        callers = x; callersWaiting = false;
+        indexCallers();
+        callerSlots = callerSlots.filter(function (sl) { return sl.n.isConnected; });
+        callerSlots.forEach(function (sl) { sl.n.textContent = ""; sl.draw(sl.n); });
+        if (!state.sel) drawPanel();
+        if (state.view === "graph") drawGraph();
+      };
+      later(g.callersFrom, function () { return callersWaiting; }, function () { window.seamCallers(null); }, 800);
     }
 
     // ---------- the card ----------
@@ -604,6 +655,13 @@
         pop.appendChild(where);
         var eg = edgeGloss(e);
         if (eg) pop.appendChild(h("p", "quip gloss", eg));
+      }
+      var cs = callsTo[o.id] || [], cb = breaksOf(o.id);
+      if (cs.length) {
+        var cl = h("p", "pop-where" + (cb ? " breaks" : ""));
+        cl.appendChild(h("b", null, cs.length + (cs.length === 1 ? " caller" : " callers") + " outside the change"));
+        if (cb) cl.appendChild(document.createTextNode(", " + cb + (cb === 1 ? " breaks" : " break")));
+        pop.appendChild(cl);
       }
       if (o.id !== state.sel) pop.appendChild(h("div", "pop-foot", "click to read it"));
       document.body.appendChild(pop);
@@ -1127,6 +1185,17 @@
           ct.textContent = "carries " + carries;
           cg.appendChild(ct);
           gn.appendChild(cg);
+        }
+        var nb = breaksOf(d.id);
+        if (nb) {
+          var bg = s("g", "breaks");
+          attr(bg, { transform: "translate(8,-10)" });
+          var br = s("rect"); attr(br, { x: 0, y: 0, width: 58, height: 17 });
+          bg.appendChild(br);
+          var bt = s("text"); attr(bt, { x: 29, y: 12, "text-anchor": "middle" });
+          bt.textContent = "breaks " + nb;
+          bg.appendChild(bt);
+          gn.appendChild(bg);
         }
         card(gn, { other: d });
         gn.addEventListener("click", function (ev) { ev.stopPropagation(); state.sel = d.id; draw(); });
@@ -1663,6 +1732,22 @@
         says.innerHTML = carries.length + (carries.length === 1 ? " definition names " : " definitions name ") +
           "<code>" + label(d) + "</code> in " + (carries.length === 1 ? "its" : "their") +
           " own signature, so the change does not stop here. Read those next.";
+      } else if (d.change === "signature") {
+        // Nothing in the change names it in a signature, so inside the change
+        // it stops here; outside is the callers' business, and this is drawn
+        // again when they land.
+        var sayOut = function (n) {
+          var nb0 = breaksOf(d.id), nc0 = (callsTo[d.id] || []).length;
+          n.className = "says" + (nb0 ? "" : " calm");
+          n.textContent = nb0
+            ? "Its interface changed, and " + nb0 + (nb0 === 1 ? " caller" : " callers") + " outside the change no longer work with it. Read those below."
+            : "Its interface changed, but nothing in this change names it in a signature, so inside the change it stops here." +
+              (callers ? (nc0 ? " Its " + nc0 + (nc0 === 1 ? " caller" : " callers") + " outside still work with it." : " Nothing outside the change calls it.")
+               : callersWaiting ? " What calls it outside the change is still being looked for."
+               : " What calls it outside the change is not something seam can see without a provider.");
+        };
+        sayOut(says);
+        callerSlots.push({ n: says, draw: sayOut });
       } else if (d.change === "body" && !(into[d.id] || []).length) {
         says.textContent = "Its body changed and nothing in this change mentions it, so nothing outside it can break because of it. Safe to read last.";
       } else if (d.change === "added") {
@@ -1688,6 +1773,7 @@
 
       uses(scroll, "Uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }), "Nothing else in this change.");
       uses(scroll, "Used by", (into[d.id] || []).map(function (e) { return { e: e, other: byId[e.from] }; }), "Nothing in this change mentions it.");
+      scroll.appendChild(callerSlot(function (n) { outside(n, d); }));
       panel.appendChild(scroll);
 
       var foot = h("div", "pfoot");
@@ -1749,6 +1835,30 @@
       });
       o.appendChild(counts);
 
+      o.appendChild(callerSlot(function (n) {
+        var bad = (callers || []).filter(function (c) { return c.breaks; });
+        if (!bad.length) {
+          if (callersWaiting) n.appendChild(h("p", "quip waiting", "Finding callers outside the change…"));
+          return;
+        }
+        n.appendChild(h("div", "lead", "Breaks outside the change"));
+        var bl = h("div", "carry-list");
+        bad.slice(0, 8).forEach(function (c) {
+          var b = h("button"); b.type = "button";
+          var gl2 = h("span", "g", "\u2717"); gl2.style.color = "var(--removed)"; gl2.style.fontFamily = "var(--mono)";
+          b.appendChild(gl2);
+          b.appendChild(h("span", "nm", whoCalls(c)));
+          var to = byId[c.to];
+          b.appendChild(h("span", "n", to ? "calls " + label(to) : ""));
+          b.title = whereCalls(c);
+          if (to) { b.addEventListener("click", function () { state.sel = to.id; draw(); }); card(b, { other: to }); }
+          bl.appendChild(b);
+          bl.appendChild(h("p", "cnote", whereCalls(c) + (c.note ? "\n" + c.note : "")));
+        });
+        if (bad.length > 8) bl.appendChild(h("p", "empty", "and " + (bad.length - 8) + " more"));
+        n.appendChild(bl);
+      }));
+
       var carriers = shownTops.map(function (x) { return { d: x, n: ifaceIn(x.id).length }; })
         .filter(function (x) { return x.n > 0 && (x.d.change === "signature" || x.d.change === "removed"); })
         .sort(function (a, b) { return b.n - a.n; }).slice(0, 6);
@@ -1775,6 +1885,41 @@
       panel.appendChild(o);
     }
 
+    // Called from outside: each caller the change did not touch, broken ones
+    // first. They are not in the change, so there is nothing to go to here: a
+    // click copies path:line for the editor.
+    function outside(n, d) {
+      var cs = (callsTo[d.id] || []).slice().sort(function (a, b) { return (b.breaks ? 1 : 0) - (a.breaks ? 1 : 0); });
+      if (!cs.length) {
+        if (callersWaiting && (d.change === "signature" || d.change === "removed" || d.exported)) {
+          n.appendChild(h("div", "sec", "Called from outside"));
+          n.appendChild(h("p", "quip waiting", "Finding what calls it outside the change…"));
+        }
+        return;
+      }
+      var nb = breaksOf(d.id);
+      var sec = h("div", "sec", "Called from outside · " + cs.length);
+      if (nb) sec.appendChild(h("span", "brk", nb + (nb === 1 ? " breaks" : " break")));
+      n.appendChild(sec);
+      var box = h("div", "uses");
+      cs.forEach(function (c) {
+        var b = h("button", c.breaks ? "broken" : null);
+        b.type = "button";
+        b.appendChild(h("span", "g", c.breaks ? "\u2717" : "\u00b7"));
+        b.appendChild(h("span", "nm", whoCalls(c)));
+        var far = h("span", "far", whereCalls(c));
+        b.appendChild(far);
+        b.title = "Copy " + whereCalls(c);
+        b.addEventListener("click", function () {
+          try { navigator.clipboard.writeText(whereCalls(c)); } catch (e) {}
+          far.textContent = "copied";
+          setTimeout(function () { far.textContent = whereCalls(c); }, 1200);
+        });
+        box.appendChild(b);
+        if (c.note) box.appendChild(h("p", "cnote" + (c.breaks ? " breaks" : ""), c.note));
+      });
+      n.appendChild(box);
+    }
     function uses(where, title, items, emptyText) {
       where.appendChild(h("div", "sec", title + (items.length ? " · " + items.length : "")));
       if (!items.length) { where.appendChild(h("p", "empty", emptyText)); return; }

@@ -604,6 +604,75 @@ sweeps() {
     ' | jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))'
 }
 
+# The branch's own commits, when it has more than one: which of them each
+# changed line came from. They are the author's split, made knowing things no
+# diff says — what waits on another MR, what is a fix and what is a feature —
+# and they carry dependencies seam's edges cannot see: a field read in one
+# definition and added in another is not a name either of them shares, but
+# the commit that reads it came after the one that added it.
+#
+# An added line is blamed on the head, a removed one reverse-blamed on the
+# base (the last commit it was still in, so the one after took it out), both
+# stopping at the base. Every line is then counted against the definition it
+# falls in, by commit, or against its file when none claims it; files count
+# every line. One commit, a merge request of one, or the worktree has nothing
+# to say, and the plan is what it was without it.
+history() {
+  none='{"commits": [], "defs": {}, "files": {}}'
+  if [ -z "$head" ] || [ "$(git rev-list --count "$base..$head" 2>/dev/null || echo 0)" -lt 2 ]; then
+    echo "$none"; return
+  fi
+  git log --reverse --topo-order --format='%H%x09%s' "$base..$head" > "$tmp/commits"
+  git diff -U0 --no-renames "$base" "$head" 2>/dev/null |
+    awk '
+      /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+      /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); next }
+      /^@@/ {
+        split($0, w, " "); split(substr(w[2], 2), a, ","); split(substr(w[3], 2), b, ",")
+        oc = (2 in a) ? a[2] + 0 : 1; nc = (2 in b) ? b[2] + 0 : 1
+        if (nc > 0) L["new\t" f] = L["new\t" f] " -L " b[1] "," (b[1] + nc - 1)
+        if (oc > 0) L["old\t" fo] = L["old\t" fo] " -L " a[1] "," (a[1] + oc - 1)
+      }
+      END { for (k in L) print k "\t" L[k] }
+    ' > "$tmp/blames"
+  while IFS='	' read -r side p ranges; do
+    # shellcheck disable=SC2086 # ranges is -L a,b words, split on purpose
+    if [ "$side" = new ]; then git blame -p $ranges "$base..$head" -- "$p"
+    else git blame -p --reverse $ranges "$base..$head" -- "$p"; fi 2>/dev/null |
+      awk -v s="$side" -v p="$p" '/^[0-9a-f]{40} / { print p "\t" s "\t" $3 "\t" $1 }'
+  done < "$tmp/blames" > "$tmp/blamed"
+  awk -F'\t' -v b="$(git rev-parse "$base^{commit}")" '
+    BEGIN { prev = b }
+    FILENAME == ARGV[1] { n++; at[$1] = n; after[prev] = n; prev = $1; next }
+    FILENAME == ARGV[2] {
+      if ($2 == "file" || $4 != "" || $8 == "") next
+      id = $1 "#" $3; k = ++nd[$1]
+      if ($7 == "new") { NA[$1, k] = $8 + 0; NZ[$1, k] = $9 + 0; if ($14 != "") { OA[$1, k] = $14 + 0; OZ[$1, k] = $15 + 0 } }
+      else { OA[$1, k] = $8 + 0; OZ[$1, k] = $9 + 0 }
+      ID[$1, k] = id
+      next
+    }
+    {
+      c = ($2 == "new") ? at[$4] : after[$4]
+      if (!c) next
+      l = $3 + 0; owner = ""
+      for (k = 1; k <= nd[$1] && owner == ""; k++) {
+        if ($2 == "new" && NA[$1, k] && l >= NA[$1, k] && l <= NZ[$1, k]) owner = ID[$1, k]
+        if ($2 == "old" && OA[$1, k] && l >= OA[$1, k] && l <= OZ[$1, k]) owner = ID[$1, k]
+      }
+      if (owner != "") d[owner "\t" c]++
+      f[$1 "\t" c]++
+    }
+    END { for (x in d) print "defs\t" x "\t" d[x]; for (x in f) print "files\t" x "\t" f[x] }
+  ' "$tmp/commits" "$out" "$tmp/blamed" |
+    jq -R -s --rawfile commits "$tmp/commits" '
+      reduce (split("\n")[] | select(length > 0) | split("\t")) as [$t, $k, $c, $n] (
+        {commits: [$commits | split("\n")[] | select(length > 0) | split("\t") | {sha: .[0], subject: .[1]}
+                   ] | to_entries | map(.value + {n: (.key + 1)}),
+         defs: {}, files: {}};
+        .[$t][$k][$c] = ($n | tonumber))'
+}
+
 plan() {
   globs=$firstglobs
   # first.local before first, this repo before this user: a repo that comes to
@@ -634,8 +703,10 @@ plan() {
   fi
   jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
   sweeps > "$tmp/sweeps.json"
+  history > "$tmp/history.json"
   jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" \
-    --argjson sweeps "$(cat "$tmp/sweeps.json")" -f "$share/split.jq" < "$tmp/graph.json" |
+    --argjson sweeps "$(cat "$tmp/sweeps.json")" --slurpfile history "$tmp/history.json" \
+    -f "$share/split.jq" < "$tmp/graph.json" |
     if [ "$1" = json ]; then jq -c --arg check "$check" '. + {check: (if $check == "" then null else $check end)}'; else cat; fi
 }
 
@@ -742,10 +813,14 @@ stack() {
     done
     git update-index -z --index-info < "$tmp/entries" || exit 1
     tree=$(git write-tree) || exit 1
-    commit=$(jq -r --argjson k "$k" --argjson n "$n" '.slices[] | select(.n == $k)
+    # A slice that is one of the branch's own commits says what that commit
+    # said: the author wrote it for a reviewer, and seam's is a placeholder.
+    from=$(jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .commit.sha // empty' "$tmp/plan.json")
+    commit=$(if [ -n "$from" ]; then git log -1 --format=%B "$from"; else
+      jq -r --argjson k "$k" --argjson n "$n" '.slices[] | select(.n == $k)
       | .name + (if (.roots | length) > 1 then " and " + ((.roots | length) - 1 | tostring) + " more" else "" end),
         "", "Slice \($k) of \($n), cut by seam --split.",
-        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end)' "$tmp/plan.json" |
+        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end)' "$tmp/plan.json"; fi |
       git commit-tree "$tree" ${parent:+-p "$parent"}) || exit 1
     short=$(git rev-parse --short "$commit")
     subject=$(git log -1 --format=%s "$commit")

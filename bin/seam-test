@@ -297,6 +297,46 @@ expect split/branch-exists "$(seam "$spbase..$sphead" --split --branch cut 2>&1;
 expect split/branch-no-worktree "$(seam worktree --branch x 2>&1; echo "rc=$?")" "$(printf 'seam: --branch wants two commits, not the worktree\nrc=2')"
 cd "$tmp" || exit 1
 
+# --- a branch of more than one commit. One story to seam, since both halves
+# name Draft, but the author made it in two: the field and what carries it,
+# then what fills it. The second half comes after what it mentions, so it can
+# be a slice of its own; a stray file goes with its commit, and each slice says
+# what its commit said. The same tree as one commit is one story.
+hs=$tmp/hs
+mkdir "$hs" && cd "$hs" || exit 1
+git init -q .; git config user.email t@t; git config user.name t
+printf 'export interface Draft {\n  id: string;\n}\n' > draft.ts
+printf 'import { Draft } from "./draft";\nexport function send(d: Draft): string {\n  return d.id;\n}\n' > send.ts
+printf 'import { Draft } from "./draft";\nexport function make(): Draft {\n  return { id: "x" };\n}\n' > make.ts
+printf 'export function mint(): string[] {\n  return [];\n}\n' > mint.ts
+printf 'notes\n' > notes.md
+git add . && git commit -qm base && hsbase=$(git rev-parse HEAD)
+printf 'export interface Draft {\n  id: string;\n  codes?: string[];\n}\n' > draft.ts
+printf 'import { Draft } from "./draft";\nexport function send(d: Draft): string {\n  return d.id + (d.codes ?? []).join(",");\n}\n' > send.ts
+git add . && git commit -qm 'Carry codes to the send' -m 'Nothing fills them yet.'
+printf 'import { Draft } from "./draft";\nimport { mint } from "./mint";\nexport function make(): Draft {\n  return { id: "x", codes: mint() };\n}\n' > make.ts
+printf 'export function mint(): string[] {\n  return ["A"];\n}\n' > mint.ts
+printf 'notes\nmore\n' > notes.md
+git add . && git commit -qm 'Mint codes on the draft' && hshead=$(git rev-parse HEAD)
+hsone=$(git commit-tree "$hshead^{tree}" -p "$hsbase" -m squashed)
+hp=$(seam "$hsbase..$hshead" --split --json)
+expect history/split-by-commit "$(printf '%s' "$hp" | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "Draft,send / make,mint"
+expect history/named-by-commit "$(printf '%s' "$hp" | jq -r '[.slices[].commit.subject] | join(" / ")')" "Carry codes to the send / Mint codes on the draft"
+expect history/stray-file "$(printf '%s' "$hp" | jq -r '.slices[] | select([.files[].path] | index("notes.md")) | .n')" "2"
+expect history/one-commit-one-story "$(seam "$hsbase..$hsone" --split --json | jq -r '[.slices[] | select(.kind == "story")] | length')" "1"
+expect history/one-commit-no-message "$(seam "$hsbase..$hsone" --split --json | jq -r '[.slices[].commit // empty] | length')" "0"
+expect history/drawn "$(SEAM_COLOR=0 seam "$hsbase..$hshead" --split | grep -cE '^ +[12]  (Carry codes to the send|Mint codes on the draft)  ')" "2"
+seam "$hsbase..$hshead" --split --branch hcut > /dev/null 2>&1
+expect history/branch-message "$(git log -1 --format=%B hcut~1)" "$(git log -1 --format=%B "$hshead~1")"
+expect history/branch-tree "$(git diff --stat hcut "$hshead" | wc -l | tr -d ' ')" "0"
+# A later commit to what both halves name: neither can land before it, so
+# they are one slice again, and only mint, which names nothing, keeps its
+# commit's place.
+printf 'export interface Draft {\n  id: string;\n  codes?: string[];\n  at?: number;\n}\n' > draft.ts
+git add . && git commit -qm 'Date the draft' && hslate=$(git rev-parse HEAD)
+expect history/later-hub-joins "$(seam "$hsbase..$hslate" --split --json | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "mint / Draft,make,send"
+cd "$tmp" || exit 1
+
 # --- references from outside what seam can see. An edge here is a name inside
 # a changed definition, so an import is invisible to it: a type that moves
 # package leaves every importer in the last slice and the move in the first.

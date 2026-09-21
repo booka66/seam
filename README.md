@@ -278,9 +278,30 @@ commit is built in an index of its own, a whole file from the head, a shared
 file rebuilt from the diff for every slice short of its last. The last commit
 is checked against the head's tree, so a slice that did not add up cannot pass
 quietly. Commit messages are the entry point's name with the slice's
-definitions and files under it, to be rewritten. `--split --json` is the plan
+definitions and files under it, to be rewritten — unless the slice is one of
+the branch's own commits (below), when it is that commit's message. `--split --json` is the plan
 as data, with the line owners of every shared file, for a picker that wants to
 stage one slice rather than commit it.
+
+A branch of more than one commit has been split once already, by someone who
+knew what no diff says: that one part is a fix to ship today and another waits
+on someone else's MR. seam blames every changed line on the commit that made
+it (`git blame`, and `--reverse` for a line taken out) and reads those commits
+three ways:
+
+- A definition lands no earlier than the commit most of its lines came from,
+  nor than anything it mentions. So a story the author built over two commits
+  is two slices in their order, and a dependency seam has no edge for — a field
+  read in one definition and added in another, which neither names — holds,
+  because the commit that reads it came after the one that added it.
+- Stories nothing connects go in commit order, not by size.
+- A file nothing else places goes with its commit's slice, before the
+  directory rule.
+
+A slice and a commit that are each other's main source share the commit's
+message, subject and body, so a stack that mirrors the branch needs no
+rewording. A fuse drops it, since the slice is then more than that commit. One
+commit, or the worktree, says none of this and the plan is what it was.
 
 ## Extending it
 

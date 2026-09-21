@@ -13,6 +13,7 @@ with `share/` beside it, and have git, ast-grep and jq installed.
 seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through
+seam HEAD~..HEAD --gloss    Claude's few words on each definition, as json
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam main...     --split    how to split it: one slice a story, each file placed
 seam main...     --split --branch cut   those slices as commits on a new branch
@@ -42,11 +43,29 @@ and `space` marks one read and moves on — read state is per definition, not pe
 file, and lives in that browser.
 
 Either way the panel holds the definition: what its change means in a sentence,
-then its own diff, then what it uses and what uses it. With nothing picked it
+then its own diff, then what it uses and what uses it. The diff reads the way
+delta does in a terminal: gruvbox, syntax coloured, both line numbers, the words
+that changed on a darker ground than their line, and unchanged runs folded. Every
+mention of another changed definition is underlined in the colour of how that one
+changed (solid where the change added the mention), and hovering one, a row under
+Uses, or a box in the graph opens a card: its signature, how it changed, and
+whether the mention is in a signature or a body. Click to go to it. With nothing picked it
 holds the change itself — what it is made of, and which definitions carry
 furthest, which is the best guess at what a reviewer will miss. `s` opens the
 score, drag to pan, wheel to zoom, `/` to filter, and the rest is behind the
 one button at the end of the bar.
+
+**Claude's notes.** With Claude Code installed, the page also carries a few
+words from Haiku: what each definition does, what the change does to it, what
+each new mention is for, which entry point to read first and why, and one
+sentence on the whole change. The page never waits for them. It opens at once
+and fills them in where they go when they land, usually within ten seconds, and
+nothing you have open moves. Haiku sees only the definitions and their diffs,
+has no tools, and posts nothing. The notes are kept in the repo's git dir by the
+two commits, so a change is glossed once. `seam <rev> --gloss` prints them as
+json for any other renderer. `git config seam.glossModel off` turns them off,
+another model id picks that model, and the page's menu hides them in that
+browser.
 
 It is one self-contained file with the graph inside it, so it works offline and
 can be sent to someone. The same page (`share/view.html`) opened on its own takes

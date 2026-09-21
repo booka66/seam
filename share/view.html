@@ -278,6 +278,56 @@
   .tk-kw { color: var(--tk-kw); } .tk-decl { color: var(--tk-decl); } .tk-str { color: var(--tk-str); }
   .tk-num { color: var(--tk-num); } .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); }
   .tk-fn { color: var(--tk-fn); } .tk-meta { color: var(--tk-meta); }
+  /* ---------- mentions and the card ----------
+     A mention of another changed definition is underlined in the colour of
+     how that one changed: solid where the change made the mention, dotted
+     where it was there already. */
+  .ref { text-decoration: underline dotted; text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: pointer; border-radius: 2px; }
+  .ref.new { text-decoration-style: solid; }
+  .ref.signature { text-decoration-color: var(--tk-type); } .ref.added { text-decoration-color: var(--code-add); }
+  .ref.removed { text-decoration-color: var(--code-del); } .ref.body { text-decoration-color: var(--code-gutter); }
+  .ref:hover, .ref:focus-visible { background: var(--code-rule); outline: none; }
+  .pop {
+    position: fixed; z-index: 50; width: 360px; max-width: calc(100vw - 24px); padding: 12px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+    box-shadow: 0 14px 38px rgba(0,0,0,.22); font-size: 12.5px; line-height: 1.5;
+    animation: pop-in .12s ease-out;
+  }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  .pop-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .pop-top .g { font-family: var(--mono); width: 10px; text-align: center; flex: none; }
+  .pop-top .nm { font-family: var(--mono); font-size: 13px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop-top .chip { margin-left: auto; flex: none; }
+  .pop-path { margin: 3px 0 0 18px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .pop-sig { margin: 10px 0 2px; padding: 7px 10px; border-radius: 7px; background: var(--code-bg); color: var(--code-fg); font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
+  .pop p { margin: 8px 0 0; }
+  .pop-where { color: var(--dim); }
+  .pop-where b { font-weight: 500; color: var(--ink); } .pop-where b.iface { color: var(--iface); }
+  .pop-foot { margin-top: 10px; font-size: 11px; color: var(--faint); }
+
+  /* ---------- Claude's notes ----------
+     Model-written, so they look it: marked with a spark, in the accent, and
+     never in the voice of the facts seam worked out itself. */
+  .quip { color: var(--dim); }
+  .quip.does { margin: 12px 0 0; color: var(--ink); font-size: 13px; line-height: 1.5; }
+  .quip.does::before, .quip.spine::before, .pop .quip.does::before { content: "\2726  "; color: var(--accent); font-size: 11px; }
+  .quip.gloss, .quip.edge, .quip.rowq { font-style: italic; color: var(--accent); }
+  .quip.why { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
+  .sec .quip.gloss { margin-left: 10px; font-size: 12px; letter-spacing: 0; text-transform: none; }
+  .quip.edge { margin: -2px 0 4px 35px; font-size: 11.5px; }
+  .quip.rowq { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+  .quip.spine { margin: 16px 0 0; font-size: 14px; line-height: 1.55; color: var(--ink); }
+  .quip.waiting { font-style: italic; color: var(--faint); background: linear-gradient(90deg, var(--faint) 0%, var(--ink) 50%, var(--faint) 100%) 0 0 / 200% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 1.6s linear infinite; }
+  .quip.waiting::before { -webkit-text-fill-color: var(--accent); }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .quip.waiting, .pop { animation: none; } }
+  .starts { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+  .starts button { display: flex; gap: 10px; align-items: baseline; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 8px; color: inherit; cursor: pointer; font-size: 12.5px; }
+  .starts button:hover { background: var(--mark); }
+  .starts .n { font-family: var(--mono); font-size: 11px; color: var(--accent); flex: none; width: 12px; }
+  .starts .tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .starts .nm { font-family: var(--mono); }
+  .starts .quip { font-size: 12px; }
   .uses { padding: 0 12px; display: flex; flex-direction: column; gap: 1px; }
   .uses button { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
   .uses button:hover { background: var(--mark); }
@@ -449,6 +499,129 @@
     function save() { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (e) {} }
 
     var state = { sel: null, view: "graph", q: "", hideBody: false, hideAside: false, open: {}, score: false };
+
+    // ---------- Claude's notes ----------
+    // A few words on each definition from seam --gloss, when there are any:
+    // in the data already when seam had them kept, or on their way from a
+    // file seam writes next to the page once Claude answers, which the page
+    // asks for until it is there. Each note is a slot filled in place when
+    // they land, so nothing you are reading moves or closes under you. They
+    // can be turned off from the menu, and stay off in this browser.
+    var gloss = g.gloss || null, glossWaiting = !gloss && !!g.glossFrom, slots = [];
+    var QKEY = "seam:quips", quipsOn = true;
+    try { quipsOn = localStorage.getItem(QKEY) !== "0"; } catch (e) {}
+    function gl() { return quipsOn ? gloss : null; }
+    function glossOf(id) { var x = gl(); return (x && x.defs && x.defs[id]) || null; }
+    function whyOf(id) {
+      var x = gl(), w = "";
+      ((x && x.order) || []).forEach(function (o) { if (o.id === id && !w) w = o.why; });
+      return w;
+    }
+    function nth(n) { return n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"); }
+    function edgeGloss(e) { var x = gl(); return (x && x.edges && x.edges[e.from + ">" + e.to]) || ""; }
+    function quip(tag, cls, get, wait) {
+      var sl = { n: h(tag, "quip " + cls), get: get, wait: wait };
+      slots.push(sl);
+      fillQuip(sl);
+      return sl.n;
+    }
+    function fillQuip(sl) {
+      var t = gl() ? sl.get() || "" : "";
+      var waiting = !t && quipsOn && glossWaiting && !!sl.wait;
+      sl.n.textContent = t || (waiting ? sl.wait : "");
+      sl.n.classList.toggle("waiting", waiting);
+      sl.n.hidden = !t && !waiting;
+    }
+    function refillQuips() {
+      slots = slots.filter(function (sl) { return sl.n.isConnected; });
+      slots.forEach(fillQuip);
+    }
+    if (glossWaiting) {
+      var tries = 0;
+      window.seamGloss = function (x) {
+        if (!glossWaiting) return;
+        gloss = x; glossWaiting = false;
+        refillQuips();
+        // The overview is the one place a note is a list rather than a line,
+        // and it has nothing open to lose.
+        if (!state.sel) drawPanel();
+      };
+      (function ask() {
+        if (!glossWaiting) return;
+        if (++tries > 120) { window.seamGloss(null); return; }
+        var sc = document.createElement("script");
+        sc.src = g.glossFrom + "?" + tries;
+        sc.onload = sc.onerror = function () { sc.remove(); if (glossWaiting) setTimeout(ask, 1500); };
+        document.head.appendChild(sc);
+      })();
+    }
+
+    // ---------- the card ----------
+    // What a name is, without leaving where you are: hover a mention in a
+    // diff, a row under Uses, or a node, and a card says what it is, how it
+    // changed, what Claude says it does, and where this mention sits. A click
+    // goes to it. One card at a time, and it waits a beat before it opens or
+    // closes, so the pointer can cross a line of code or step onto it.
+    var pop = null, popT = 0;
+    function card(n, it) {
+      n.addEventListener("mouseenter", function () { clearTimeout(popT); popT = setTimeout(function () { showCard(n, it); }, 160); });
+      n.addEventListener("mouseleave", function () { clearTimeout(popT); popT = setTimeout(hideCard, 200); });
+      n.addEventListener("focus", function () { clearTimeout(popT); showCard(n, it); });
+      n.addEventListener("blur", function () { clearTimeout(popT); popT = setTimeout(hideCard, 200); });
+    }
+    function hideCard() { if (pop) { pop.remove(); pop = null; } }
+    function showCard(n, it) {
+      hideCard();
+      if (!n.isConnected) return;
+      var o = it.other, e = it.e;
+      pop = h("div", "pop");
+      pop.setAttribute("role", "tooltip");
+      pop.addEventListener("mouseenter", function () { clearTimeout(popT); });
+      pop.addEventListener("mouseleave", function () { popT = setTimeout(hideCard, 200); });
+      var top = h("div", "pop-top");
+      var g1 = h("span", "g", GLYPH[o.change] || "·");
+      g1.style.color = COLOUR[o.change] || "var(--ghost)";
+      top.appendChild(g1);
+      top.appendChild(h("span", "nm", label(o)));
+      top.appendChild(h("span", "chip " + o.change, WORD[o.change] || o.change));
+      pop.appendChild(top);
+      pop.appendChild(h("div", "pop-path", o.path + (o.start ? ":" + o.start : "") + (read[o.id] ? "  ·  read" : "")));
+      if (o.head) {
+        var sig = h("div", "pop-sig");
+        paint(sig, lexLine(o.head, lexerFor(o.path), null).toks);
+        pop.appendChild(sig);
+      }
+      var q = glossOf(o.id);
+      if (q && q.does) pop.appendChild(h("p", "quip does", q.does));
+      if (q && q.gloss) pop.appendChild(h("p", "quip gloss", q.gloss));
+      if (!q && quipsOn && glossWaiting) pop.appendChild(h("p", "quip waiting", "Claude is reading it…"));
+      if (e) {
+        var user = byId[e.from];
+        var where = h("p", "pop-where");
+        where.appendChild(h("b", e.facet === "iface" ? "iface" : null, e.facet === "iface" ? "In the signature" : "In the body"));
+        where.appendChild(document.createTextNode(" of " + (user ? label(user) : "its user") + (e.facet === "iface"
+          ? ": when this changes shape, so does that." : ": a change to it stops there.") + (e.new ? " New in this change." : "")));
+        pop.appendChild(where);
+        var eg = edgeGloss(e);
+        if (eg) pop.appendChild(h("p", "quip gloss", eg));
+      }
+      if (o.id !== state.sel) pop.appendChild(h("div", "pop-foot", "click to read it"));
+      document.body.appendChild(pop);
+      var r = n.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+      var x = Math.min(window.innerWidth - pw - 12, Math.max(12, r.left));
+      var y = r.bottom + 8 + ph < window.innerHeight ? r.bottom + 8 : Math.max(12, r.top - ph - 8);
+      pop.style.left = x + "px"; pop.style.top = y + "px";
+    }
+    // Where each changed definition this one uses is named in a line: the
+    // same rule the graph found the edge by, a whole word not after a dot
+    // (a spread's three dots aside), so what is underlined is what was counted.
+    function mentionsIn(d) {
+      return (out[d.id] || []).map(function (e) {
+        var name = e.to.replace(/^[^#]*#/, "").replace(/^type /, "");
+        var esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return { re: new RegExp("(?:(?<=\\.\\.\\.)|(?<![\\w$.]))" + esc + "(?![\\w$])", "g"), it: { other: byId[e.to], e: e } };
+      }).filter(function (m) { return m.it.other; });
+    }
     var fit = true, view = { k: 1, x: 0, y: 0 }, world = null, svg = null, lastLayout = null, dragged = false;
 
     // ---------- chrome ----------
@@ -510,6 +683,17 @@
       menu.appendChild(h("div", "mtitle", "Show"));
       menu.appendChild(toggle("hideBody", "Only what changed shape"));
       menu.appendChild(toggle("hideAside", "Source files only"));
+      if (gloss || glossWaiting) {
+        var ql = h("label"), qc = document.createElement("input");
+        qc.type = "checkbox"; qc.id = "seam-quips"; qc.checked = quipsOn;
+        qc.addEventListener("change", function () {
+          quipsOn = qc.checked;
+          try { localStorage.setItem(QKEY, quipsOn ? "1" : "0"); } catch (e) {}
+          draw();
+        });
+        ql.appendChild(qc); ql.appendChild(document.createTextNode("Claude\u2019s notes" + (gloss && gloss.model ? " (" + gloss.model.replace(/^claude-/, "") + ")" : "")));
+        menu.appendChild(ql);
+      }
       var k = h("div", "keyline");
       k.innerHTML = "A <b>solid</b> arrow is a name in the user\u2019s own signature, so the change carries on outward. A <b>dashed</b> one is in the body, where it stops. A <b>red</b> one is a cycle, cut where it was drawn." +
         "<br><b>g</b> switch view \u00b7 <b>/</b> filter \u00b7 <b>s</b> score \u00b7 <b>space</b> mark read";
@@ -940,8 +1124,7 @@
           cg.appendChild(ct);
           gn.appendChild(cg);
         }
-        var title = s("title"); title.textContent = d.id + "\n" + (d.head || "");
-        gn.appendChild(title);
+        card(gn, { other: d });
         gn.addEventListener("click", function (ev) { ev.stopPropagation(); state.sel = d.id; draw(); });
         gn.addEventListener("keydown", function (ev) {
           if (ev.key === "Enter") { ev.preventDefault(); state.sel = d.id; draw(); }
@@ -1202,6 +1385,7 @@
       row.appendChild(t);
       row.appendChild(h("span", "g", GLYPH[d.change] || "·"));
       row.appendChild(h("span", "nm", label(d)));
+      row.appendChild(quip("span", "rowq", function () { var q = glossOf(d.id); return q && q.gloss; }));
       if (first) row.appendChild(h("span", "where", d.path));
       if (r.edge) row.appendChild(h("span", "pill " + (r.edge.facet === "iface" ? "iface" : "bodyf"),
         r.edge.facet === "iface" ? "in the signature" : "in the body"));
@@ -1330,27 +1514,53 @@
       }
       return [spans(A, keepA), spans(B, keepB)];
     }
-    // A line's tokens drawn, each cut where an emphasised span starts or ends.
-    function paint(tx, toks, em) {
-      em = em || [];
-      var at = 0;
+    // A line's tokens drawn, each cut where an emphasised span or a mention
+    // starts or ends. A mention is underlined in the colour of how what it
+    // names changed, and opens its card; one inside a comment or a string is
+    // only text.
+    function paint(tx, toks, em, refs) {
+      em = em || []; refs = refs || [];
+      var at = 0, wrap = null;
       toks.forEach(function (tk) {
         var text = tk[1], from = at;
         at += text.length;
         var cuts = [from, at];
-        em.forEach(function (r) { if (r[0] > from && r[0] < at) cuts.push(r[0]); if (r[1] > from && r[1] < at) cuts.push(r[1]); });
+        em.concat(refs).forEach(function (r) { if (r[0] > from && r[0] < at) cuts.push(r[0]); if (r[1] > from && r[1] < at) cuts.push(r[1]); });
         cuts.sort(function (p, q) { return p - q; });
         for (var j = 0; j + 1 < cuts.length; j++) {
           var bit = text.slice(cuts[j] - from, cuts[j + 1] - from);
           var inEm = em.some(function (r) { return cuts[j] >= r[0] && cuts[j] < r[1]; });
           var cls = [tk[0] && "tk-" + tk[0], inEm && "em"].filter(Boolean).join(" ");
-          tx.appendChild(cls ? h("span", cls, bit) : document.createTextNode(bit));
+          var node = cls ? h("span", cls, bit) : document.createTextNode(bit);
+          var ref = tk[0] === "com" || tk[0] === "str" ? null
+            : refs.filter(function (r) { return cuts[j] >= r[0] && cuts[j] < r[1]; })[0];
+          if (!ref) { wrap = null; tx.appendChild(node); continue; }
+          if (!wrap || wrap.ref !== ref) {
+            var it = ref[2];
+            wrap = { ref: ref, n: h("span", "ref " + it.other.change + (it.e.new ? " new" : "")) };
+            wrap.n.tabIndex = 0;
+            card(wrap.n, it);
+            wrap.n.addEventListener("click", function () { hideCard(); state.sel = it.other.id; draw(); });
+            wrap.n.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { hideCard(); state.sel = it.other.id; draw(); } });
+            tx.appendChild(wrap.n);
+          }
+          wrap.n.appendChild(node);
         }
       });
     }
+    function refsIn(text, ms) {
+      var out = [];
+      ms.forEach(function (m) {
+        m.re.lastIndex = 0;
+        var x;
+        while ((x = m.re.exec(text))) out.push([x.index, x.index + x[0].length, m.it]);
+      });
+      return out;
+    }
     var CONTEXT = 3;
-    function diffBox(lines, path) {
+    function diffBox(lines, path, ms) {
       var L = lexerFor(path), oldOpen = null, newOpen = null;
+      ms = ms || [];
       // Each side lexed on its own, since a line only one side has can open
       // a comment the other never sees; an unchanged line takes the new side's.
       var rows = lines.map(function (l) {
@@ -1400,7 +1610,7 @@
       function line(r) {
         var l = r.l;
         return row(l.mark === "+" ? "+" : l.mark === "-" ? "−" : "", l.mark === "+" ? "add" : l.mark === "-" ? "del" : "ctx",
-          l.old || "", l.new || "", function (tx) { paint(tx, r.toks, r.em); });
+          l.old || "", l.new || "", function (tx) { paint(tx, r.toks, r.em, l.mark === "-" ? [] : refsIn(l.text, ms)); });
       }
       for (var x = 0; x < rows.length;) {
         if (!any || near[x]) { body.appendChild(line(rows[x])); x++; continue; }
@@ -1419,6 +1629,7 @@
 
     // ---------- the panel ----------
     function drawPanel() {
+      hideCard();
       panel.textContent = "";
       var d = byId[state.sel];
       if (!d) { drawOverview(); return; }
@@ -1435,6 +1646,11 @@
       if (d.box && d.box.kind !== "source") chips.appendChild(h("span", "chip", d.box.kind));
       if (d.staged != null) chips.appendChild(h("span", "chip", d.staged ? (d.unstaged ? "staged and not" : "staged") : "unstaged"));
       top.appendChild(chips);
+      top.appendChild(quip("p", "does", function () { var q = glossOf(d.id); return q && q.does; }, "Claude is reading it…"));
+      top.appendChild(quip("p", "why", function () {
+        var ord = (gl().order || []).map(function (o) { return o.id; }), at = ord.indexOf(d.id);
+        return at < 0 ? "" : (at === 0 ? "Read it first" : "Read it " + nth(at + 1) + " of " + ord.length) + ": " + whyOf(d.id);
+      }));
       scroll.appendChild(top);
 
       var carries = ifaceIn(d.id);
@@ -1457,8 +1673,10 @@
       if (d.diff && d.diff.length) {
         var plus = d.diff.filter(function (l) { return l.mark === "+"; }).length;
         var minus = d.diff.filter(function (l) { return l.mark === "-"; }).length;
-        scroll.appendChild(h("div", "sec", "Diff · +" + plus + " −" + minus));
-        scroll.appendChild(diffBox(d.diff, d.path));
+        var sec = h("div", "sec", "Diff · +" + plus + " −" + minus);
+        sec.appendChild(quip("span", "gloss", function () { var q = glossOf(d.id); return q && q.gloss; }));
+        scroll.appendChild(sec);
+        scroll.appendChild(diffBox(d.diff, d.path, mentionsIn(d)));
       } else if (d.head) {
         scroll.appendChild(h("div", "sec", "Signature"));
         scroll.appendChild(diffBox([{ mark: " ", old: "", new: String(d.start || ""), text: d.head }], d.path));
@@ -1490,6 +1708,24 @@
       if (doneN) bits.push(doneN + " of " + shownTops.length + " read");
       if (files.length) bits.push(files.length === 1 ? "1 file with none in it" : files.length + " files with none in them");
       o.appendChild(h("p", "sub", bits.join(" \u00b7 ")));
+      o.appendChild(quip("p", "spine", function () { return gl().spine; }, "Claude is reading the change…"));
+      var starts = ((gl() && gl().order) || []).filter(function (x) { return byId[x.id] && shown(byId[x.id]); });
+      if (starts.length) {
+        o.appendChild(h("div", "lead", "Where to start"));
+        var sl = h("div", "starts");
+        starts.forEach(function (x, i) {
+          var b = h("button"); b.type = "button";
+          b.appendChild(h("span", "n", String(i + 1)));
+          var tx = h("span", "tx");
+          tx.appendChild(h("span", "nm", label(byId[x.id])));
+          tx.appendChild(h("span", "quip", x.why));
+          b.appendChild(tx);
+          b.addEventListener("click", function () { state.sel = x.id; draw(); });
+          card(b, { other: byId[x.id] });
+          sl.appendChild(b);
+        });
+        o.appendChild(sl);
+      }
 
       var counts = h("div", "counts");
       [["signature", "interfaces changed"], ["added", "added"], ["removed", "removed"], ["body", "bodies only"]].forEach(function (k) {
@@ -1549,7 +1785,9 @@
         b.appendChild(h("span", "nm", label(it.other)));
         b.appendChild(h("span", "far " + it.e.facet, it.e.facet === "iface" ? "in the signature" : "in the body"));
         b.addEventListener("click", function () { state.sel = it.other.id; draw(); });
+        card(b, it);
         box.appendChild(b);
+        box.appendChild(quip("p", "edge", function () { return edgeGloss(it.e); }));
       });
       where.appendChild(box);
     }
@@ -1652,7 +1890,7 @@
     document.addEventListener("keydown", function (e) {
       if (e.target.tagName === "INPUT") { if (e.key === "Escape") e.target.blur(); return; }
       if (e.key === "/") { e.preventDefault(); search.focus(); return; }
-      if (e.key === "Escape") { if (state.score) { state.score = false; draw(); } return; }
+      if (e.key === "Escape") { hideCard(); if (state.score) { state.score = false; draw(); } return; }
       if (e.key === "s" || e.key === "S") { if (score) { state.score = !state.score; draw(); } return; }
       if (e.key === "g") { state.view = state.view === "graph" ? "reading" : "graph"; fit = true; draw(); return; }
       if (e.key === " ") { e.preventDefault(); markAndAdvance(); return; }

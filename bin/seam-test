@@ -159,6 +159,43 @@ if [ -n "$chrome" ] && [ -x "$chrome" ]; then
   expect page/names-whole "$(grep -o '<text [^>]*>[^<]*</text>' "$tmp/dom.html" | grep -c '\u2026')" "0"
 fi
 
+# --- Claude's notes (seam --gloss), against a stand-in for Claude Code that
+# answers the schema from the ids the prompt gave it and keeps the prompt.
+mkdir -p "$tmp/stub"
+cat > "$tmp/stub/claude" <<'EOF'
+#!/bin/sh
+cat > "$STUB_PROMPT"
+n=$(grep -c '^## s' "$STUB_PROMPT")
+jq -n --argjson n "$n" '{is_error: false, structured_output: {spine: "the spine of it",
+  symbols: [range(1; $n + 1) | {id: "s\(.)", does: "does \(.)", gloss: "gloss \(.)"}],
+  edges: [{from: "s1", to: "s2", gloss: "an edge"}], order: [{id: "s1", why: "read me first"}]}}'
+EOF
+chmod +x "$tmp/stub/claude"
+git config seam.glossModel off
+expect gloss/off "$(SEAM_CLAUDE=$tmp/stub/claude seam "$base..$head" --gloss 2>&1 >/dev/null)" "seam: glossing is off (git config seam.glossModel)"
+git config --unset seam.glossModel
+gl=$tmp/gloss.json
+SEAM_CLAUDE=$tmp/stub/claude STUB_PROMPT=$tmp/prompt seam "$base..$head" --gloss > "$gl"
+first=$(jq -r '.definitions[0].id' "$g")
+expect gloss/spine "$(jq -r .spine "$gl")" "the spine of it"
+expect gloss/every-definition "$(jq -r '.defs | length' "$gl")" "$(jq -r '.definitions | length' "$g")"
+expect gloss/ids-mapped-back "$(jq -r --arg id "$first" '.defs[$id].does' "$gl")" "does 1"
+expect gloss/order-mapped-back "$(jq -r '.order[0].id' "$gl")" "$first"
+expect gloss/edge-mapped-back "$(jq -r '.edges | keys[0]' "$gl")" "$first>$(jq -r '.definitions[1].id' "$g")"
+expect gloss/prompt-names-by-sn "$(grep -c "^## s1 $first\$" "$tmp/prompt")" "1"
+expect gloss/prompt-has-diffs "$(grep -c '^    [-+ ]' "$tmp/prompt" | awk '{ print ($1 > 0) }')" "1"
+# Kept by the two commits: asked again, it answers without Claude at all.
+expect gloss/kept "$(SEAM_CLAUDE=false seam "$base..$head" --gloss | jq -r .spine)" "the spine of it"
+# The page carries a kept gloss, and draws it.
+seam "$base..$head" --html > "$tmp/glossed.html"
+expect html/carries-gloss "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/glossed.html" | sed 's|<\\/|</|g' | jq -r '.gloss.spine')" "the spine of it"
+if [ -n "$chrome" ] && [ -x "$chrome" ]; then
+  "$chrome" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom "file://$tmp/glossed.html" > "$tmp/gdom.html" 2>/dev/null
+  expect page/draws-spine "$(grep -c 'class="quip spine">the spine of it<' "$tmp/gdom.html")" "1"
+  expect page/draws-where-to-start "$(grep -c 'class="quip">read me first<' "$tmp/gdom.html")" "1"
+  expect page/glossed-no-error "$(grep -o '<b>The page could not draw[^<]*' "$tmp/gdom.html" | wc -l | tr -d ' ')" "0"
+fi
+
 # --- Rust and Python. The same model through another language file: a struct,
 # an impl named by what it implements, a doc comment and an attribute riding
 # with the fn under them, a decorator that is part of the interface, and a

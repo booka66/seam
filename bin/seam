@@ -2,6 +2,8 @@
 # seam <rev>              what a change does, by definition rather than by file
 # seam <rev> --json       the same as a graph: definitions, edges, boxes
 # seam <rev> --html       that graph in a page you can click through, opened
+# seam <rev> --gloss      Claude's few words on each definition, as json, for
+#                         the page and any other renderer (see gloss below)
 # seam <rev> --score      what makes the change hard to read, and how hard
 # seam <rev> --score --brief          the same in one line, for a footer
 # seam <rev> --score --table <file>   from a table already built, without
@@ -62,6 +64,7 @@
 # file in ./.seam/languages or ~/.config/seam/languages; a file there replaces
 # the one seam ships under the same name.
 share=$(cd "$(dirname "$0")/../share" && pwd)
+self=$(cd "$(dirname "$0")" && pwd)/${0##*/}
 
 case $1 in
   --share) printf '%s\n' "$share"; exit 0 ;;
@@ -122,7 +125,7 @@ case $1 in
     exit 0 ;;
 esac
 
-rev= json= html= score= brief= table= split= branch= firstglobs= check= planout= want=
+rev= json= html= glossy= score= brief= table= split= branch= firstglobs= check= planout= want=
 for a in "$@"; do
   case $want in
     table) table=$a want=; continue ;;
@@ -135,6 +138,7 @@ for a in "$@"; do
   case $a in
     --json) json=1 ;;
     --html) html=1 ;;
+    --gloss) glossy=1 ;;
     --score) score=1 ;;
     --brief) brief=1 ;;
     --table) want=table ;;
@@ -750,11 +754,82 @@ page() {
   jq -c --arg brief "" --arg fmt json -f "$share/score.jq" < "$tmp/graph.json" > "$tmp/score.json"
   awk '/<!--SEAM DATA-->/ { exit } { print }' "$share/view.html"
   printf '<script id="seam-data" type="application/json">'
-  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" \
-    '.definitions |= map(. + {diff: ($d[0][.id] // null)}) | .score = $s[0]' < "$tmp/graph.json" |
+  gf=$(glossfile "$1")
+  [ -s "$gf" ] || gf=/dev/null
+  jq -c --slurpfile d "$tmp/diffs.json" --slurpfile s "$tmp/score.json" --slurpfile gl "$gf" --arg from "${2:-}" \
+    '.definitions |= map(. + {diff: ($d[0][.id] // null)}) | .score = $s[0]
+     | if ($gl | length) > 0 then .gloss = $gl[0] elif $from != "" then .glossFrom = $from else . end' < "$tmp/graph.json" |
     sed 's|</|<\\/|g'
   printf '</script>\n'
   awk 'f { print } /<!--SEAM DATA-->/ { f = 1 }' "$share/view.html"
+}
+
+# --gloss: what a model adds that the trees cannot, for a reviewer: what each
+# definition does as the change leaves it, what the change does to it, what
+# each new mention is for, which entry point to read first and why, and one
+# sentence on the whole. Haiku (git config seam.glossModel; off turns it off),
+# through Claude Code with no tools at all and an empty directory for a cwd:
+# it reads the prompt on stdin, which is the table and each definition's own
+# diff cut to forty lines, and answers against a schema. Nothing is posted.
+# Kept by the two commits in the repo's git dir, since they never change; the
+# worktree's by its table, so an edit glosses again.
+glossfile() {
+  if [ -n "$head" ]; then key=$(git rev-parse "$base")-$(git rev-parse "$head"); else key=worktree-$(git hash-object "$1"); fi
+  printf '%s/seam-gloss/%s.json\n' "$(git rev-parse --path-format=absolute --git-common-dir)" "$key"
+}
+glossmodel() { git config --get seam.glossModel || echo claude-haiku-4-5; }
+gloss() {
+  file=$(glossfile "$1")
+  [ -s "$file" ] && { cat "$file"; return; }
+  model=$(glossmodel)
+  [ "$model" != off ] || { echo "seam: glossing is off (git config seam.glossModel)" >&2; return 1; }
+  claude=${SEAM_CLAUDE:-claude}
+  command -v "$claude" >/dev/null 2>&1 || { echo "seam: glossing wants Claude Code on the PATH" >&2; return 1; }
+  diffs "$1" > "$tmp/diffs.json"
+  graph "$1" > "$tmp/graph.json"
+  # Each definition goes by sN, which costs the model a few tokens where a path
+  # costs twenty and which it cannot get wrong: the schema makes every id an
+  # enum of them, and the answer is mapped back.
+  {
+    cat <<'PROMPT'
+You are glossing a code change for a reviewer, who reads it one definition at a time. For each definition below, say two things. First, does: in at most ten words, what the definition itself does, as the change leaves it (as it was, for a removed one), as if the change did not matter: its job in the code, never a restatement of its name or signature ("resolves a return's refund amount from its items"). Second, gloss: in at most eight words, what THIS CHANGE does to it: the intent, not the mechanics. Lead with a verb where one fits ("retries on timeout instead of failing", "widens options with a batch size"). One only touched by wiring gets a plain gloss ("passes the new proxy through"); a new one says what the change adds it for, not what does already said. Where a definition says "newly uses", gloss each of those edges too, in at most eight words and lower case: what it now does with the one it uses ("passes the facts into the send result"). Then put the entry points (marked root) in the order a reader should take them, with one short sentence each on why that one comes first. Then the spine: one sentence, for a reviewer who has read nothing yet, on what the change introduces and why. Name each definition by its id, the s and number after ##, never by its name.
+
+PROMPT
+    if [ -n "$head" ]; then printf 'The commits, newest first:\n'; git log --format='  %s' "$base..$head" 2>/dev/null | head -30
+    else printf 'The change is uncommitted work in the working tree.\n'; fi
+    echo
+    jq -r --slurpfile d "$tmp/diffs.json" '
+      (.definitions | to_entries | map({key: .value.id, value: "s\(.key + 1)"}) | from_entries) as $s
+      | (.edges | map(select(.new)) | group_by(.from) | map({key: .[0].from, value: map(.to)}) | from_entries) as $new
+      | .definitions[]
+      | "## \($s[.id]) \(.id)\n\(.change), +\(.added // 0) -\(.removed // 0)\(if .root then ", root" else "" end)\n\(.head // "")"
+        + (($new[.id] // []) | map(select($s[.])) | if length > 0 then "\nnewly uses: " + (map("\($s[.]) \(.)") | join(", ")) else "" end)
+        + "\n" + ((($d[0][.id] // [])[:40]) | map("    \(.mark)\(.text)") | join("\n")) + "\n"' < "$tmp/graph.json"
+  } > "$tmp/prompt"
+  jq -c '[.definitions | keys[] | "s\(. + 1)"] as $ids | {type: "object", additionalProperties: false, required: ["symbols", "edges", "order", "spine"], properties: {
+      symbols: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "does", "gloss"],
+        properties: {id: {enum: $ids}, does: {type: "string"}, gloss: {type: "string"}}}},
+      edges: {type: "array", items: {type: "object", additionalProperties: false, required: ["from", "to", "gloss"],
+        properties: {from: {enum: $ids}, to: {enum: $ids}, gloss: {type: "string"}}}},
+      order: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "why"],
+        properties: {id: {enum: $ids}, why: {type: "string"}}}},
+      spine: {type: "string"}}}' < "$tmp/graph.json" > "$tmp/schema"
+  mkdir -p "$tmp/empty" "${file%/*}" || return 1
+  # No thinking: the CLI turns it on for Haiku too, and a gloss thought about
+  # takes four times as long and says the same.
+  (cd "$tmp/empty" && MAX_THINKING_TOKENS=0 "$claude" -p --model "$model" --restricted --tools "" --strict-mcp-config \
+    --disable-slash-commands --no-session-persistence --permission-prompts none --output-format json \
+    --json-schema "$(cat "$tmp/schema")" < "$tmp/prompt") > "$tmp/answer" 2> "$tmp/answer.err"
+  jq -e '(.is_error | not) and .structured_output != null' "$tmp/answer" >/dev/null 2>&1 ||
+    { printf 'seam: Claude did not gloss this: %s\n' "$(head -c 300 "$tmp/answer.err" "$tmp/answer" | tr '\n' ' ')" >&2; return 1; }
+  jq -c --arg model "$model" --slurpfile g "$tmp/graph.json" '
+    ($g[0].definitions | map(.id)) as $m | def full: $m[.[1:] | tonumber - 1];
+    .structured_output as $o
+    | {model: $model, spine: $o.spine,
+       defs: ($o.symbols | map({key: (.id | full), value: {does, gloss}}) | from_entries),
+       order: ($o.order | map({id: (.id | full), why})),
+       edges: ($o.edges | map({key: "\(.from | full)>\(.to | full)", value: .gloss}) | from_entries)}' "$tmp/answer" > "$file.new" &&
+    mv "$file.new" "$file" && cat "$file"
 }
 
 # build: the table, one row a listed definition, in reading order, members
@@ -1180,14 +1255,27 @@ if [ -n "$html" ]; then
   if [ -t 1 ]; then
     pagefile=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
     pagefile=$(printf '%s' "$pagefile" | sed 's|//*|/|g')
-    page "$out" > "$pagefile" || exit 1
+    # The page never waits for Claude: without a gloss kept already, it opens
+    # at once and asks for this file until a seam of its own, started here in
+    # the background, writes it.
+    glossjs=${pagefile%.html}.gloss.js
+    rm -f "$glossjs"
+    later=
+    if [ ! -s "$(glossfile "$out")" ] && [ "$(glossmodel)" != off ] && command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}; fi
+    page "$out" "$later" > "$pagefile" || exit 1
     printf '%s\n' "$pagefile" >&2
+    if [ -n "$later" ]; then
+      nohup sh -c 'g=$("$0" "$1" --gloss 2>"$2.err") && { printf "seamGloss(%s)\n" "$g" > "$2.tmp"; rm -f "$2.err"; } || printf "seamGloss(null)\n" > "$2.tmp"; mv "$2.tmp" "$2"' \
+        "$self" "$rev" "$glossjs" </dev/null >/dev/null 2>&1 &
+    fi
     if command -v open >/dev/null 2>&1; then open "$pagefile"
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$pagefile"
     fi
   else
     page "$out"
   fi
+elif [ -n "$glossy" ]; then
+  gloss "$out"
 elif [ -n "$split" ]; then
   graph "$out" > "$tmp/graph.json"
   if [ -n "$branch" ]; then stack

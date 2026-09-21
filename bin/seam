@@ -4,6 +4,7 @@
 # seam <rev> --html       that graph in a page you can click through, opened
 # seam <rev> --gloss      Claude's few words on each definition, as json, for
 #                         the page and any other renderer (see gloss below)
+# seam <rev> --html --gloss   the page with them, for this run alone
 # seam <rev> --score      what makes the change hard to read, and how hard
 # seam <rev> --score --brief          the same in one line, for a footer
 # seam <rev> --score --table <file>   from a table already built, without
@@ -1256,13 +1257,16 @@ if [ -n "$html" ]; then
   if [ -t 1 ]; then
     pagefile=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
     pagefile=$(printf '%s' "$pagefile" | sed 's|//*|/|g')
-    # The page never waits for Claude: glossing on and none kept already, it opens
-    # at once and asks for this file until a seam of its own, started here in
-    # the background, writes it.
+    # The page never waits for Claude: glossing on (or --gloss asked for it
+    # this once) and none kept already, it opens at once and asks for this
+    # file until a seam of its own, started here in the background, writes it.
     glossjs=${pagefile%.html}.gloss.js
     rm -f "$glossjs"
     later=
-    if [ ! -s "$(glossfile "$out")" ] && glosson && command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}; fi
+    if [ ! -s "$(glossfile "$out")" ] && { [ -n "$glossy" ] || glosson; }; then
+      if command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}
+      elif [ -n "$glossy" ]; then echo "seam: glossing wants Claude Code on the PATH" >&2; fi
+    fi
     page "$out" "$later" > "$pagefile" || exit 1
     printf '%s\n' "$pagefile" >&2
     if [ -n "$later" ]; then
@@ -1273,6 +1277,8 @@ if [ -n "$html" ]; then
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$pagefile"
     fi
   else
+    # A pipe or a file has nothing to fill in later, so it waits for the notes.
+    if [ -n "$glossy" ] || glosson; then gloss "$out" >/dev/null || true; fi
     page "$out"
   fi
 elif [ -n "$glossy" ]; then

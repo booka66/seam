@@ -183,6 +183,11 @@ expect gloss/prompt-names-by-sn "$(grep -c "^## s1 $first\$" "$tmp/prompt")" "1"
 expect gloss/prompt-has-diffs "$(grep -c '^    [-+ ]' "$tmp/prompt" | awk '{ print ($1 > 0) }')" "1"
 # Asked for, it runs with no setting at all: --gloss is the opting in.
 expect gloss/asked-is-opted-in "$(git config --get seam.gloss || echo unset)" "unset"
+# --html --gloss into a file waits for the notes and carries them, with no
+# setting and nothing kept.
+rm -rf "$(git rev-parse --git-common-dir)/seam-gloss"
+SEAM_CLAUDE=$tmp/stub/claude STUB_PROMPT=$tmp/prompt seam "$base..$head" --html --gloss > "$tmp/both.html"
+expect html/gloss-asked "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/both.html" | sed 's|<\\/|</|g' | jq -r '.gloss.spine')" "the spine of it"
 # Kept by the two commits: asked again, it answers without Claude at all.
 expect gloss/kept "$(SEAM_CLAUDE=false seam "$base..$head" --gloss | jq -r .spine)" "the spine of it"
 # The page carries a kept gloss, and draws it.

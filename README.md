@@ -63,7 +63,8 @@ and fills them in where they go when they land, usually within ten seconds, and
 nothing you have open moves. Haiku sees only the definitions and their diffs,
 has no tools, and posts nothing. The notes are kept in the repo's git dir by the
 two commits, so a change is glossed once. `seam <rev> --gloss` prints them as
-json for any other renderer, and asking for them that way is opting in.
+json for any other renderer, and `--html --gloss` is the page with them for
+that run alone: asking for them either way is opting in.
 `git config seam.glossModel <id>` picks another model, and the page's menu hides
 them in that browser.
 

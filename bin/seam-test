@@ -539,6 +539,8 @@ expect split/check-sees-the-commit "$(seam "$smhead..$smtwo" --split --branch ck
 # --check '' is none.
 mkdir -p .seam && printf '# a comment\nfalse\n' > .seam/check
 expect split/check-from-the-repo "$(seam "$smhead..$smtwo" --split --branch ck5 >/dev/null 2>&1; echo "rc=$?")" "rc=1"
+expect split/json-says-check "$(seam "$smhead..$smtwo" --split --json | jq -r .check)" "false"
+expect split/json-says-none "$(seam "$smhead..$smtwo" --split --json --check '' | jq -r .check)" "null"
 expect split/check-none-named "$(seam "$smhead..$smtwo" --split --branch ck6 --check '' >/dev/null 2>&1; echo "rc=$?")" "rc=0"
 rm -f .seam/check
 expect split/check-wants-a-command "$(seam "$smhead..$smtwo" --split --check 2>&1; echo "rc=$?")" "$(printf 'seam: --check wants a command\nrc=2')"

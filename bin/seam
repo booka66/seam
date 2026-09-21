@@ -197,8 +197,9 @@ esac
 [ -n "$rev" ] || { sed -n '2,11p' "$0" | sed 's/^# //' >&2; exit 2; }
 # The check --branch runs when none is named: a command a line in .seam/check,
 # with check.local before it and this user's after, the way first is found.
-# --check '' is none at all.
-if [ -n "$branch" ] && [ -z "$checkset" ]; then
+# --check '' is none at all. Found for any --split, so --split --json can say
+# which one --branch would run.
+if [ -n "$split" ] && [ -z "$checkset" ]; then
   IFS=$nl
   for d in $seamdirs; do
     IFS=$ifs
@@ -628,7 +629,8 @@ plan() {
   jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
   sweeps > "$tmp/sweeps.json"
   jq -r --arg fmt "$1" --argjson first "$(cat "$tmp/first.json")" \
-    --argjson sweeps "$(cat "$tmp/sweeps.json")" -f "$share/split.jq" < "$tmp/graph.json"
+    --argjson sweeps "$(cat "$tmp/sweeps.json")" -f "$share/split.jq" < "$tmp/graph.json" |
+    if [ "$1" = json ]; then jq -c --arg check "$check" '. + {check: (if $check == "" then null else $check end)}'; else cat; fi
 }
 
 # --branch: the slices as commits, in the order the plan has them, on a new

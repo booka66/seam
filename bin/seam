@@ -212,18 +212,20 @@ hunk_awk=$(cat "$share/hunks.awk")
 # change did to a line is most of what a provider wants and the table carries
 # only what it did to a definition; SEAM_HEAD is empty for the worktree.
 refs() {
+  # Names of its own for the loop: sh has no locals, and page, split and the
+  # rest all run this in the middle of work that has its own f and n.
   : > "$1.refs"
-  for d in ./.seam/references "${XDG_CONFIG_HOME:-$HOME/.config}/seam/references" "$share/references"; do
-    [ -d "$d" ] || continue
-    for f in "$d"/*; do
-      [ -x "$f" ] || continue
-      n=${f##*/}
-      case " $seenrefs " in *" $n "*) continue ;; esac
-      seenrefs="$seenrefs $n"
+  for refdir in ./.seam/references "${XDG_CONFIG_HOME:-$HOME/.config}/seam/references" "$share/references"; do
+    [ -d "$refdir" ] || continue
+    for reffile in "$refdir"/*; do
+      [ -x "$reffile" ] || continue
+      refname=${reffile##*/}
+      case " $seenrefs " in *" $refname "*) continue ;; esac
+      seenrefs="$seenrefs $refname"
       # A provider that fails says nothing rather than stopping the change
       # being read: seam worked before it existed and works if it breaks.
-      SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$f" < "$1" 2>/dev/null |
-        awk -F'\t' -v via="$n" 'NF >= 2 && $1 != "" && $2 != "" {
+      SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null |
+        awk -F'\t' -v via="$refname" 'NF >= 2 && $1 != "" && $2 != "" {
           print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
         }' >> "$1.refs"
     done
@@ -1176,12 +1178,12 @@ if [ -n "$html" ]; then
   # A terminal on the other end has nothing to read a page with, so write it
   # where it can be opened and open it; a pipe or a file gets the page itself.
   if [ -t 1 ]; then
-    f=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
-    f=$(printf '%s' "$f" | sed 's|//*|/|g')
-    page "$out" > "$f" || exit 1
-    printf '%s\n' "$f" >&2
-    if command -v open >/dev/null 2>&1; then open "$f"
-    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$f"
+    pagefile=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
+    pagefile=$(printf '%s' "$pagefile" | sed 's|//*|/|g')
+    page "$out" > "$pagefile" || exit 1
+    printf '%s\n' "$pagefile" >&2
+    if command -v open >/dev/null 2>&1; then open "$pagefile"
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$pagefile"
     fi
   else
     page "$out"

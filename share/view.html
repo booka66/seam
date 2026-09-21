@@ -29,6 +29,13 @@
     --iface-line: #e2cb9a;
     --body: #8a8c94;
     --mark: #eceae4;
+    /* The diff is gruvbox, in otis's colours for it: delta's grounds for a
+       changed line and a changed word, and gruvbox's own for the syntax. */
+    --code-bg: #fbf1c7; --code-fg: #3c3836; --code-gutter: #bdae93; --code-rule: #ebdbb2;
+    --code-minus: #edcdaa; --code-plus: #e8deab; --code-minus-emph: #dda489; --code-plus-emph: #d1c98c;
+    --code-del: #9d0006; --code-add: #79740e;
+    --tk-kw: #9d0006; --tk-decl: #af3a03; --tk-str: #79740e; --tk-num: #8f3f71;
+    --tk-com: #928374; --tk-type: #b57614; --tk-fn: #427b58; --tk-meta: #076678;
     --panel-w: 440px;
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     --ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
@@ -43,6 +50,11 @@
       --removed: #e08b76; --removed-soft: rgba(224, 139, 118, 0.11);
       --iface: #d8a24a; --iface-soft: #1b1a17; --iface-line: #4a3a20;
       --body: #6f727c; --mark: #1f222b;
+      --code-bg: #282828; --code-fg: #ebdbb2; --code-gutter: #665c54; --code-rule: #3c3836;
+      --code-minus: #3c2022; --code-plus: #26332a; --code-minus-emph: #6b2f31; --code-plus-emph: #3f5a45;
+      --code-del: #fb4934; --code-add: #b8bb26;
+      --tk-kw: #fb4934; --tk-decl: #fe8019; --tk-str: #b8bb26; --tk-num: #d3869b;
+      --tk-com: #928374; --tk-type: #fabd2f; --tk-fn: #8ec07c; --tk-meta: #83a598;
     }
   }
   :root[data-theme="dark"] {
@@ -53,6 +65,11 @@
     --removed: #e08b76; --removed-soft: rgba(224, 139, 118, 0.11);
     --iface: #d8a24a; --iface-soft: #1b1a17; --iface-line: #4a3a20;
     --body: #6f727c; --mark: #1f222b;
+    --code-bg: #282828; --code-fg: #ebdbb2; --code-gutter: #665c54; --code-rule: #3c3836;
+    --code-minus: #3c2022; --code-plus: #26332a; --code-minus-emph: #6b2f31; --code-plus-emph: #3f5a45;
+    --code-del: #fb4934; --code-add: #b8bb26;
+    --tk-kw: #fb4934; --tk-decl: #fe8019; --tk-str: #b8bb26; --tk-num: #d3869b;
+    --tk-com: #928374; --tk-type: #fabd2f; --tk-fn: #8ec07c; --tk-meta: #83a598;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -239,12 +256,28 @@
   .says.calm { background: var(--mark); border-left-color: var(--ghost); color: var(--dim); }
   .says code { font-family: var(--mono); }
   .sec { padding: 18px 20px 8px; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
-  .diff { margin: 0 20px; border: 1px solid var(--line); border-radius: 9px; background: var(--ground); overflow: auto; max-height: 44vh; font-family: var(--mono); font-size: 12px; line-height: 1.6; padding: 4px 0; }
-  .dl { display: flex; padding: 0 10px; white-space: pre; }
-  .dl .ln { width: 34px; flex: none; text-align: right; color: var(--ghost); font-variant-numeric: tabular-nums; }
-  .dl .tx { padding-left: 12px; color: var(--dim); }
-  .dl.add { background: var(--added-soft); } .dl.add .tx { color: var(--added); }
-  .dl.del { background: var(--removed-soft); } .dl.del .tx { color: var(--removed); }
+  /* The diff the way otis's delta draws one: both line numbers, the syntax
+     coloured on every line, the words that changed on a darker ground than
+     the line they are in, and long unchanged runs folded away. The gutter
+     stays put while the code scrolls under it. */
+  .diff { margin: 0 20px; border: 1px solid var(--line); border-radius: 9px; background: var(--code-bg); color: var(--code-fg); overflow: auto; max-height: 44vh; font-family: var(--mono); font-size: 12px; line-height: 1.6; padding: 4px 0; tab-size: 4; }
+  .diff .rows { display: inline-block; min-width: 100%; }
+  .dl { display: flex; white-space: pre; background: var(--code-bg); }
+  .dl .gut { position: sticky; left: 0; flex: none; display: flex; background: inherit; border-right: 1px solid var(--code-rule); color: var(--code-gutter); font-variant-numeric: tabular-nums; }
+  .dl .ln { width: 4.5ch; text-align: right; }
+  .dl .ln + .ln { padding-right: 1ch; width: 5.5ch; }
+  .dl .mk { width: 2.5ch; flex: none; text-align: center; color: var(--code-gutter); }
+  .dl .tx { padding-right: 12px; }
+  .dl.add { background: var(--code-plus); } .dl.add .mk { color: var(--code-add); }
+  .dl.del { background: var(--code-minus); } .dl.del .mk { color: var(--code-del); }
+  .dl.add .em { background: var(--code-plus-emph); border-radius: 2px; }
+  .dl.del .em { background: var(--code-minus-emph); border-radius: 2px; }
+  .dl.fold { cursor: pointer; color: var(--code-gutter); }
+  .dl.fold:hover { color: var(--code-fg); }
+  .dl.fold .tx { font-style: italic; }
+  .tk-kw { color: var(--tk-kw); } .tk-decl { color: var(--tk-decl); } .tk-str { color: var(--tk-str); }
+  .tk-num { color: var(--tk-num); } .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); }
+  .tk-fn { color: var(--tk-fn); } .tk-meta { color: var(--tk-meta); }
   .uses { padding: 0 12px; display: flex; flex-direction: column; gap: 1px; }
   .uses button { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: inherit; cursor: pointer; }
   .uses button:hover { background: var(--mark); }
@@ -1186,6 +1219,204 @@
       save(); draw();
     }
 
+    // ---------- the diff ----------
+    // Highlighted by a lexer small enough to live here, since the page is one
+    // file and a diff is short: comments, strings, numbers, keywords, and a
+    // name's role from what follows it. Each side is lexed in order with what
+    // is still open carried from line to line, so a block comment or a
+    // multi-line string stays one. A language it does not know gets the
+    // C-like rules and no keywords, which is still most of the colour.
+    var LEX = (function () {
+      function set(t) { var o = {}; t.split(" ").forEach(function (w) { o[w] = 1; }); return o; }
+      var ts = {
+        line: "//", block: ["/*", "*/"], quotes: "'\"`", multi: "`", meta: /^@[\w.]+/,
+        kw: set("if else for while do return break continue switch case default throw try catch finally new delete typeof instanceof in of void yield await async import export from as satisfies keyof readonly extends implements super"),
+        decl: set("const let var function class interface type enum namespace declare abstract public private protected static get set"),
+        lit: set("true false null undefined this NaN Infinity")
+      };
+      var rs = {
+        line: "//", block: ["/*", "*/"], quotes: "\"'", multi: "\"", meta: /^#!?\[[^\]]*\]?/, rust: 1,
+        kw: set("if else for while loop match return break continue in as move ref mut where unsafe async await dyn extern crate super use mod"),
+        decl: set("fn let struct enum trait impl type pub const static"),
+        lit: set("true false self Self None Some Ok Err")
+      };
+      var py = {
+        line: "#", quotes: "'\"", meta: /^@[\w.]+/, py: 1,
+        kw: set("if elif else for while return break continue pass raise try except finally with as import from in is not and or lambda yield await async global nonlocal del assert match case"),
+        decl: set("def class"),
+        lit: set("True False None self cls")
+      };
+      var other = { line: "//", block: ["/*", "*/"], quotes: "'\"`", kw: {}, decl: {}, lit: {} };
+      return { ts: ts, tsx: ts, js: ts, jsx: ts, mjs: ts, cjs: ts, mts: ts, cts: ts, rs: rs, py: py, pyi: py, other: other };
+    })();
+    function lexerFor(path) {
+      var m = /\.([^./]+)$/.exec(path || "");
+      return (m && LEX[m[1]]) || LEX.other;
+    }
+    // Where a string or comment that starts at i ends: past its closer, or -1
+    // when the line runs out first. A backslash escapes in a string only.
+    function closer(t, i, end, esc) {
+      for (; i < t.length; i++) {
+        if (esc && t[i] === "\\") { i++; continue; }
+        if (t.substr(i, end.length) === end) return i + end.length;
+      }
+      return -1;
+    }
+    // One line: its tokens as [class, text], and what is left open after it.
+    function lexLine(t, L, open) {
+      var out = [], i = 0, prev = "", m;
+      function push(c, x) { out.push([c, x]); }
+      function run(start, end, esc, cls) {
+        var e = closer(t, start, end, esc);
+        if (e < 0) { push(cls, t.slice(i)); i = t.length; return { end: end, esc: esc, cls: cls }; }
+        push(cls, t.slice(i, e)); i = e; return null;
+      }
+      if (open) { open = run(0, open.end, open.esc, open.cls); if (open) return { toks: out, open: open }; }
+      while (i < t.length) {
+        var r = t.slice(i), c = t[i];
+        if ((m = /^\s+/.exec(r))) { push("", m[0]); i += m[0].length; continue; }
+        if (L.line && r.lastIndexOf(L.line, 0) === 0) { push("com", r); break; }
+        if (L.block && r.lastIndexOf(L.block[0], 0) === 0) { open = run(i + L.block[0].length, L.block[1], false, "com"); continue; }
+        if (L.py && (m = /^[rRbBuUfF]{0,2}("""|''')/.exec(r))) { open = run(i + m[0].length, m[1], true, "str"); continue; }
+        if (L.rust && c === "'") {
+          if ((m = /^'(\\.[^']*|[^'\\])'/.exec(r))) { push("str", m[0]); i += m[0].length; continue; }
+          if ((m = /^'[A-Za-z_]\w*/.exec(r))) { push("decl", m[0]); i += m[0].length; continue; }
+        }
+        if ((m = (L.py ? /^[rRbBuUfF]{0,2}(['"])/ : /^(['"`])/).exec(r)) && L.quotes.indexOf(m[1]) >= 0) {
+          var o = run(i + m[0].length, m[1], true, "str");
+          if (o && (L.multi || "").indexOf(m[1]) >= 0) open = o;
+          continue;
+        }
+        if ((m = /^(0[xXoObB][\da-fA-F_]+|\d[\d_]*(\.\d[\d_]*)?([eE][+-]?\d+)?)\w*/.exec(r))) { push("num", m[0]); i += m[0].length; continue; }
+        if (L.meta && (m = L.meta.exec(r))) { push("meta", m[0]); i += m[0].length; continue; }
+        if ((m = /^[A-Za-z_$][\w$]*/.exec(r))) {
+          var w = m[0], next = t.slice(i + w.length).replace(/^\s+/, "")[0] || "";
+          var cls = L.kw[w] ? "kw" : L.decl[w] ? "decl" : L.lit[w] ? "num"
+            : /^(def|fn|function)$/.test(prev) || next === "(" || (L.rust && next === "!") ? "fn"
+            : /^[A-Z]/.test(w) || /^(class|struct|enum|trait|interface|type|impl)$/.test(prev) ? "type" : "";
+          push(cls, w); prev = w; i += w.length; continue;
+        }
+        push("", c); prev = c; i++;
+      }
+      return { toks: out, open: open };
+    }
+    // The words two lines have in common, as the longest run of them in order;
+    // what is left over on each side is what changed. Words are runs of word
+    // characters, runs of space, and single punctuation. Lines that share less
+    // than half their text are simply different, and marking every word of
+    // them would say nothing, so they get no emphasis.
+    function wordDiff(a, b) {
+      var A = a.match(/\w+|\s+|[^\w\s]/g) || [], B = b.match(/\w+|\s+|[^\w\s]/g) || [];
+      var n = A.length, k = B.length;
+      if (!n || !k || n * k > 250000) return null;
+      var dp = new Uint16Array((n + 1) * (k + 1)), x, y;
+      for (x = n - 1; x >= 0; x--) for (y = k - 1; y >= 0; y--)
+        dp[x * (k + 1) + y] = A[x] === B[y] ? dp[(x + 1) * (k + 1) + y + 1] + 1 : Math.max(dp[(x + 1) * (k + 1) + y], dp[x * (k + 1) + y + 1]);
+      var keepA = [], keepB = [], same = 0;
+      x = 0; y = 0;
+      while (x < n && y < k) {
+        if (A[x] === B[y]) { keepA[x] = keepB[y] = 1; same += A[x].length; x++; y++; }
+        else if (dp[(x + 1) * (k + 1) + y] >= dp[x * (k + 1) + y + 1]) x++;
+        else y++;
+      }
+      if (2 * same < 0.5 * (a.length + b.length)) return null;
+      function spans(W, keep) {
+        var out = [], at = 0;
+        W.forEach(function (w, j) {
+          if (!keep[j]) { var last = out[out.length - 1]; if (last && last[1] === at) last[1] += w.length; else out.push([at, at + w.length]); }
+          at += w.length;
+        });
+        return out;
+      }
+      return [spans(A, keepA), spans(B, keepB)];
+    }
+    // A line's tokens drawn, each cut where an emphasised span starts or ends.
+    function paint(tx, toks, em) {
+      em = em || [];
+      var at = 0;
+      toks.forEach(function (tk) {
+        var text = tk[1], from = at;
+        at += text.length;
+        var cuts = [from, at];
+        em.forEach(function (r) { if (r[0] > from && r[0] < at) cuts.push(r[0]); if (r[1] > from && r[1] < at) cuts.push(r[1]); });
+        cuts.sort(function (p, q) { return p - q; });
+        for (var j = 0; j + 1 < cuts.length; j++) {
+          var bit = text.slice(cuts[j] - from, cuts[j + 1] - from);
+          var inEm = em.some(function (r) { return cuts[j] >= r[0] && cuts[j] < r[1]; });
+          var cls = [tk[0] && "tk-" + tk[0], inEm && "em"].filter(Boolean).join(" ");
+          tx.appendChild(cls ? h("span", cls, bit) : document.createTextNode(bit));
+        }
+      });
+    }
+    var CONTEXT = 3;
+    function diffBox(lines, path) {
+      var L = lexerFor(path), oldOpen = null, newOpen = null;
+      // Each side lexed on its own, since a line only one side has can open
+      // a comment the other never sees; an unchanged line takes the new side's.
+      var rows = lines.map(function (l) {
+        var r = { l: l, toks: null, em: null };
+        if (l.mark !== "+") { var o = lexLine(l.text, L, oldOpen); oldOpen = o.open; r.toks = o.toks; }
+        if (l.mark !== "-") { var n = lexLine(l.text, L, newOpen); newOpen = n.open; r.toks = n.toks; }
+        return r;
+      });
+      // A run of removed lines followed by a run of added ones is an edit.
+      // Each removed line is paired with the first added line after the last
+      // pair that it is enough like, so an added line in the middle of an
+      // edit does not push every pair after it out of step.
+      for (var i = 0; i < rows.length;) {
+        if (rows[i].l.mark !== "-") { i++; continue; }
+        var ds = i; while (i < rows.length && rows[i].l.mark === "-") i++;
+        var as = i; while (i < rows.length && rows[i].l.mark === "+") i++;
+        for (var j = ds, at = as; j < as && at < i; j++) {
+          for (var q = at; q < i; q++) {
+            var wd = wordDiff(rows[j].l.text, rows[q].l.text);
+            if (wd) { rows[j].em = wd[0]; rows[q].em = wd[1]; at = q + 1; break; }
+          }
+        }
+      }
+      // Unchanged lines more than CONTEXT from a change fold into one row
+      // that opens them, unless the fold would hide fewer lines than it takes.
+      // The first line stays, since it is the signature: what delta's hunk
+      // header would have named.
+      var near = rows.map(function (r, x) { return x === 0; }), any = false;
+      rows.forEach(function (r, x) {
+        if (r.l.mark === " ") return;
+        any = true;
+        for (var y = Math.max(0, x - CONTEXT); y <= Math.min(rows.length - 1, x + CONTEXT); y++) near[y] = true;
+      });
+      var box = h("div", "diff"), body = h("div", "rows");
+      box.appendChild(body);
+      function row(mark, cls, old, nu, fill) {
+        var r = h("div", "dl " + cls), gut = h("span", "gut");
+        gut.appendChild(h("span", "ln", old));
+        gut.appendChild(h("span", "ln", nu));
+        r.appendChild(gut);
+        r.appendChild(h("span", "mk", mark));
+        var tx = h("span", "tx");
+        fill(tx);
+        r.appendChild(tx);
+        return r;
+      }
+      function line(r) {
+        var l = r.l;
+        return row(l.mark === "+" ? "+" : l.mark === "-" ? "−" : "", l.mark === "+" ? "add" : l.mark === "-" ? "del" : "ctx",
+          l.old || "", l.new || "", function (tx) { paint(tx, r.toks, r.em); });
+      }
+      for (var x = 0; x < rows.length;) {
+        if (!any || near[x]) { body.appendChild(line(rows[x])); x++; continue; }
+        var from = x; while (x < rows.length && !near[x]) x++;
+        var hid = rows.slice(from, x);
+        if (hid.length < 3) { hid.forEach(function (r) { body.appendChild(line(r)); }); continue; }
+        var fold = row("", "fold", "⋯", "", function (tx) { tx.textContent = hid.length + " unchanged lines"; });
+        fold.title = "Show them";
+        fold.addEventListener("click", (function (f, hid) {
+          return function () { hid.forEach(function (r) { body.insertBefore(line(r), f); }); f.remove(); };
+        })(fold, hid));
+        body.appendChild(fold);
+      }
+      return box;
+    }
+
     // ---------- the panel ----------
     function drawPanel() {
       panel.textContent = "";
@@ -1227,22 +1458,10 @@
         var plus = d.diff.filter(function (l) { return l.mark === "+"; }).length;
         var minus = d.diff.filter(function (l) { return l.mark === "-"; }).length;
         scroll.appendChild(h("div", "sec", "Diff · +" + plus + " −" + minus));
-        var box = h("div", "diff");
-        d.diff.forEach(function (l) {
-          var line = h("div", "dl " + (l.mark === "+" ? "add" : l.mark === "-" ? "del" : "ctx"));
-          line.appendChild(h("span", "ln", l.new || l.old || ""));
-          line.appendChild(h("span", "tx", (l.mark === " " ? " " : l.mark) + " " + l.text));
-          box.appendChild(line);
-        });
-        scroll.appendChild(box);
+        scroll.appendChild(diffBox(d.diff, d.path));
       } else if (d.head) {
         scroll.appendChild(h("div", "sec", "Signature"));
-        var pre = h("div", "diff");
-        var one = h("div", "dl");
-        one.appendChild(h("span", "ln", String(d.start || "")));
-        one.appendChild(h("span", "tx", d.head));
-        pre.appendChild(one);
-        scroll.appendChild(pre);
+        scroll.appendChild(diffBox([{ mark: " ", old: "", new: String(d.start || ""), text: d.head }], d.path));
       }
 
       uses(scroll, "Uses", (out[d.id] || []).map(function (e) { return { e: e, other: byId[e.to] }; }), "Nothing else in this change.");

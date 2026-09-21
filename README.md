@@ -55,17 +55,17 @@ furthest, which is the best guess at what a reviewer will miss. `s` opens the
 score, drag to pan, wheel to zoom, `/` to filter, and the rest is behind the
 one button at the end of the bar.
 
-**Claude's notes.** With Claude Code installed, the page also carries a few
-words from Haiku: what each definition does, what the change does to it, what
+**Claude's notes**, opt in. With `git config seam.gloss true` (and Claude Code
+installed), the page also carries a few words from Haiku: what each definition does, what the change does to it, what
 each new mention is for, which entry point to read first and why, and one
 sentence on the whole change. The page never waits for them. It opens at once
 and fills them in where they go when they land, usually within ten seconds, and
 nothing you have open moves. Haiku sees only the definitions and their diffs,
 has no tools, and posts nothing. The notes are kept in the repo's git dir by the
 two commits, so a change is glossed once. `seam <rev> --gloss` prints them as
-json for any other renderer. `git config seam.glossModel off` turns them off,
-another model id picks that model, and the page's menu hides them in that
-browser.
+json for any other renderer, and asking for them that way is opting in.
+`git config seam.glossModel <id>` picks another model, and the page's menu hides
+them in that browser.
 
 It is one self-contained file with the graph inside it, so it works offline and
 can be sent to someone. The same page (`share/view.html`) opened on its own takes

@@ -683,7 +683,11 @@
       menu.appendChild(h("div", "mtitle", "Show"));
       menu.appendChild(toggle("hideBody", "Only what changed shape"));
       menu.appendChild(toggle("hideAside", "Source files only"));
-      if (gloss || glossWaiting) {
+      if (!gloss && !glossWaiting) {
+        var qh = h("div", "keyline");
+        qh.innerHTML = "<b>git config seam.gloss true</b> has Claude Haiku add a few words to each definition next time.";
+        menu.appendChild(qh);
+      } else {
         var ql = h("label"), qc = document.createElement("input");
         qc.type = "checkbox"; qc.id = "seam-quips"; qc.checked = quipsOn;
         qc.addEventListener("change", function () {

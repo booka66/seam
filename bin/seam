@@ -767,8 +767,9 @@ page() {
 # --gloss: what a model adds that the trees cannot, for a reviewer: what each
 # definition does as the change leaves it, what the change does to it, what
 # each new mention is for, which entry point to read first and why, and one
-# sentence on the whole. Haiku (git config seam.glossModel; off turns it off),
-# through Claude Code with no tools at all and an empty directory for a cwd:
+# sentence on the whole. Opt in: --gloss is asking, and --html asks in the
+# background only with git config seam.gloss true. Haiku, or the model
+# git config seam.glossModel names, through Claude Code with no tools at all and an empty directory for a cwd:
 # it reads the prompt on stdin, which is the table and each definition's own
 # diff cut to forty lines, and answers against a schema. Nothing is posted.
 # Kept by the two commits in the repo's git dir, since they never change; the
@@ -778,11 +779,11 @@ glossfile() {
   printf '%s/seam-gloss/%s.json\n' "$(git rev-parse --path-format=absolute --git-common-dir)" "$key"
 }
 glossmodel() { git config --get seam.glossModel || echo claude-haiku-4-5; }
+glosson() { [ "$(git config --bool --get seam.gloss)" = true ]; }
 gloss() {
   file=$(glossfile "$1")
   [ -s "$file" ] && { cat "$file"; return; }
   model=$(glossmodel)
-  [ "$model" != off ] || { echo "seam: glossing is off (git config seam.glossModel)" >&2; return 1; }
   claude=${SEAM_CLAUDE:-claude}
   command -v "$claude" >/dev/null 2>&1 || { echo "seam: glossing wants Claude Code on the PATH" >&2; return 1; }
   diffs "$1" > "$tmp/diffs.json"
@@ -1255,13 +1256,13 @@ if [ -n "$html" ]; then
   if [ -t 1 ]; then
     pagefile=${TMPDIR:-/tmp}/seam-$(printf '%s' "$rev" | tr -c 'A-Za-z0-9._-' '-').html
     pagefile=$(printf '%s' "$pagefile" | sed 's|//*|/|g')
-    # The page never waits for Claude: without a gloss kept already, it opens
+    # The page never waits for Claude: glossing on and none kept already, it opens
     # at once and asks for this file until a seam of its own, started here in
     # the background, writes it.
     glossjs=${pagefile%.html}.gloss.js
     rm -f "$glossjs"
     later=
-    if [ ! -s "$(glossfile "$out")" ] && [ "$(glossmodel)" != off ] && command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}; fi
+    if [ ! -s "$(glossfile "$out")" ] && glosson && command -v "${SEAM_CLAUDE:-claude}" >/dev/null 2>&1; then later=${glossjs##*/}; fi
     page "$out" "$later" > "$pagefile" || exit 1
     printf '%s\n' "$pagefile" >&2
     if [ -n "$later" ]; then

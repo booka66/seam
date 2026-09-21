@@ -171,9 +171,6 @@ jq -n --argjson n "$n" '{is_error: false, structured_output: {spine: "the spine 
   edges: [{from: "s1", to: "s2", gloss: "an edge"}], order: [{id: "s1", why: "read me first"}]}}'
 EOF
 chmod +x "$tmp/stub/claude"
-git config seam.glossModel off
-expect gloss/off "$(SEAM_CLAUDE=$tmp/stub/claude seam "$base..$head" --gloss 2>&1 >/dev/null)" "seam: glossing is off (git config seam.glossModel)"
-git config --unset seam.glossModel
 gl=$tmp/gloss.json
 SEAM_CLAUDE=$tmp/stub/claude STUB_PROMPT=$tmp/prompt seam "$base..$head" --gloss > "$gl"
 first=$(jq -r '.definitions[0].id' "$g")
@@ -184,6 +181,8 @@ expect gloss/order-mapped-back "$(jq -r '.order[0].id' "$gl")" "$first"
 expect gloss/edge-mapped-back "$(jq -r '.edges | keys[0]' "$gl")" "$first>$(jq -r '.definitions[1].id' "$g")"
 expect gloss/prompt-names-by-sn "$(grep -c "^## s1 $first\$" "$tmp/prompt")" "1"
 expect gloss/prompt-has-diffs "$(grep -c '^    [-+ ]' "$tmp/prompt" | awk '{ print ($1 > 0) }')" "1"
+# Asked for, it runs with no setting at all: --gloss is the opting in.
+expect gloss/asked-is-opted-in "$(git config --get seam.gloss || echo unset)" "unset"
 # Kept by the two commits: asked again, it answers without Claude at all.
 expect gloss/kept "$(SEAM_CLAUDE=false seam "$base..$head" --gloss | jq -r .spine)" "the spine of it"
 # The page carries a kept gloss, and draws it.

@@ -16,12 +16,17 @@ dest=${SEAM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/seam}
 bin=${SEAM_BIN:-$HOME/.local/bin}
 
 die() { printf 'seam: %s\n' "$1" >&2; exit 1; }
-for c in git curl tar; do command -v "$c" >/dev/null 2>&1 || die "needs $c"; done
+for c in curl tar; do command -v "$c" >/dev/null 2>&1 || die "needs $c"; done
 
-# The newest release is the highest vX.Y.Z tag.
-version=${SEAM_VERSION:-$(git ls-remote --tags --refs "$repo" 'v*' 2>/dev/null |
-  sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' |
-  sort -t. -k1,1n -k2,2n -k3,3n | tail -1)}
+# The newest release is the highest vX.Y.Z tag: tags alone, no GitHub
+# release to publish. Asked of GitHub's API over curl, since a Mac that has
+# never had the Command Line Tools has only a git that offers to install
+# them; git only when the API says nothing (60 asks an hour an address).
+newest() { sed -n "s|$1|\\1|p" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1; }
+version=${SEAM_VERSION:-$(curl -fsSL "https://api.github.com/repos/booka66/seam/tags?per_page=100" 2>/dev/null |
+  newest '.*"name": *"v\([0-9]*\.[0-9]*\.[0-9]*\)".*')}
+[ -n "$version" ] || version=$(git ls-remote --tags --refs "$repo" 'v*' 2>/dev/null |
+  newest '.*refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$')
 [ -n "$version" ] || die "could not find a release at $repo"
 
 have=

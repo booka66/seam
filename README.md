@@ -3,11 +3,12 @@
 A change, read by definition rather than by file.
 
 ```
-brew install booka66/seam/seam
+curl -fsSL https://raw.githubusercontent.com/booka66/seam/main/install.sh | sh
 ```
 
-That brings ast-grep and jq with it. Anywhere else, put `bin/` on your PATH
-with `share/` beside it, and have git, ast-grep and jq installed.
+That puts the newest release in `~/.local/share/seam` and a `seam` that runs
+it in `~/.local/bin`; run it again to update. seam needs git, ast-grep and jq.
+Or put a clone's `bin/` on your PATH with `share/` beside it.
 
 ```
 seam HEAD~..HEAD            the definitions the change touches, as a table

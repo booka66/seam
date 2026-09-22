@@ -29,6 +29,9 @@ trap 'rm -rf "$tmp"' EXIT
 # ./.seam where they mean to.
 XDG_CONFIG_HOME=$tmp/noconfig
 export XDG_CONFIG_HOME
+# And none of the settings your shell exports: a SEAM_PATH putting a tool's
+# providers ahead of seam's (otis's shell line does) failed nine tests.
+for v in $(env | sed -n 's/^\(SEAM_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
 mkdir -p "$XDG_CONFIG_HOME"
 # The TypeScript import provider seam ships is off for all but its own tests,
 # the way a repo turns one off: a file of its name that runs nothing. The

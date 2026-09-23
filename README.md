@@ -7,8 +7,9 @@ curl -fsSL https://raw.githubusercontent.com/booka66/seam/main/install.sh | sh
 ```
 
 That puts the newest release in `~/.local/share/seam` and a `seam` that runs
-it in `~/.local/bin`; run it again to update. seam needs git, ast-grep and jq.
-Or put a clone's `bin/` on your PATH with `share/` beside it.
+it in `~/.local/bin`, which it puts on your PATH; run it again to update.
+seam needs git, ast-grep and jq. Or put a clone's `bin/` on your PATH with
+`share/` beside it.
 
 ```
 seam HEAD~..HEAD            the definitions the change touches, as a table

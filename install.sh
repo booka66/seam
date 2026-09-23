@@ -7,9 +7,11 @@
 #
 # Run again, it updates. seam finds share/ beside its own bin/, so the two
 # stay together and what goes on PATH is a script that runs it, not a link.
-# The release is unpacked beside the one there and swapped in; VERSION in it
-# says which it is. The script on PATH is written again only when the
-# release changes, since a cache may be keyed by its time (otis's are).
+# ~/.local/bin is put on PATH in the startup file of the shell you use, so a
+# new terminal has seam without a "put this on PATH" step. The release is
+# unpacked beside the one there and swapped in; VERSION in it says which it
+# is. The script on PATH is written again only when the release changes,
+# since a cache may be keyed by its time (otis's are).
 set -eu
 repo=https://github.com/booka66/seam
 dest=${SEAM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/seam}
@@ -59,10 +61,38 @@ else
   else printf 'seam %s is in %s, and runs as %s/seam\n' "$version" "$dest" "$bin"; fi
 fi
 
-case ":$PATH:" in
-  *":$bin:"*) ;;
-  *) printf 'Put %s on your PATH to run it as seam.\n' "$bin" ;;
+# ~/.local/bin on PATH: this process, and a new terminal via the startup file
+# of the shell you use. Written once; a line already there is left alone.
+case ":$PATH:" in *":$bin:"*) ;; *) PATH=$bin:$PATH; export PATH ;; esac
+case ${SHELL##*/} in
+  bash)
+    if [ "$(uname)" = Darwin ]; then
+      rc=
+      for f in .bash_profile .bash_login .profile; do [ -f "$HOME/$f" ] && { rc=$HOME/$f; break; }; done
+      rc=${rc:-$HOME/.bash_profile}
+    else
+      rc=$HOME/.bashrc
+    fi
+    if [ "$bin" = "$HOME/.local/bin" ]; then pline='export PATH="$HOME/.local/bin:$PATH"'
+    else pline="export PATH=\"$bin:\$PATH\""; fi ;;
+  fish)
+    rc=${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish
+    if [ "$bin" = "$HOME/.local/bin" ]; then pline='fish_add_path $HOME/.local/bin'
+    else pline="fish_add_path $bin"; fi ;;
+  *)
+    rc=${ZDOTDIR:-$HOME}/.zshrc
+    if [ "$bin" = "$HOME/.local/bin" ]; then pline='export PATH="$HOME/.local/bin:$PATH"'
+    else pline="export PATH=\"$bin:\$PATH\""; fi ;;
 esac
+if grep -qsF "$bin" "$rc" 2>/dev/null || grep -qsF '$HOME/.local/bin' "$rc" 2>/dev/null ||
+  grep -qsF '~/.local/bin' "$rc" 2>/dev/null; then
+  :
+else
+  mkdir -p "$(dirname "$rc")"
+  printf '\n# seam\n%s\n' "$pline" >> "$rc"
+  case $rc in "$HOME"/*) rcname="~/${rc#"$HOME"/}" ;; *) rcname=$rc ;; esac
+  printf 'Added %s to PATH in %s; open a new terminal, or run: %s\n' "$bin" "$rcname" "$pline"
+fi
 for c in ast-grep jq; do
   command -v "$c" >/dev/null 2>&1 || printf 'seam needs %s too: brew install %s, or your package manager\n' "$c" "$c"
 done

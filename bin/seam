@@ -1158,8 +1158,10 @@ PROMPT
   (cd "$tmp/empty" && MAX_THINKING_TOKENS=0 "$claude" -p --model "$model" --restricted --tools "" --strict-mcp-config \
     --disable-slash-commands --no-session-persistence --permission-prompts none --output-format json \
     --json-schema "$(cat "$tmp/schema")" < "$tmp/prompt") > "$tmp/answer" 2> "$tmp/answer.err"
-  jq -e '(.is_error | not) and .structured_output != null' "$tmp/answer" >/dev/null 2>&1 ||
-    { printf 'seam: Claude did not gloss this: %s\n' "$(head -c 300 "$tmp/answer.err" "$tmp/answer" | tr '\n' ' ')" >&2; return 1; }
+  # Why not, in Claude's words when it gave some ("You've hit your limit · resets 5pm").
+  jq -e '(.is_error | not) and .structured_output != null' "$tmp/answer" >/dev/null 2>&1 || {
+    why=$(jq -r '.result // empty' "$tmp/answer" 2>/dev/null | grep -m1 .)
+    printf 'seam: Claude did not gloss this: %s\n' "${why:-$(head -c 300 "$tmp/answer.err" "$tmp/answer" | tr '\n' ' ')}" >&2; return 1; }
   jq -c --arg model "$model" --slurpfile g "$tmp/graph.json" '
     ($g[0].definitions | map(.id)) as $m | def full: $m[.[1:] | tonumber - 1];
     # An sN that slipped into the words is put back as the name it stands for.

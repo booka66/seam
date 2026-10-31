@@ -1,9 +1,10 @@
 #!/bin/sh
-# seam-test: run seam's tests. Each one builds a throwaway repo under $TMPDIR,
-# runs seam on it and compares the output; a failure prints what was expected
-# and what came out. Exit 1 if anything failed.
+# seam-test: build seam and run its tests. Each one builds a throwaway repo under
+# $TMPDIR, runs seam on it and compares the output; a failure prints what was
+# expected and what came out. Exit 1 if anything failed. `cargo test` has the rest.
 root=$(cd "$(dirname "$0")/.." && pwd)
-PATH=$root/bin:$PATH
+(cd "$root" && cargo build --release -q) || exit 1
+PATH=$root/target/release:$root/bin:$PATH
 export PATH
 failed=0 passed=0
 expect() {
@@ -14,11 +15,6 @@ expect() {
     printf 'FAIL %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"
   fi
 }
-
-if ! command -v ast-grep >/dev/null 2>&1; then
-  echo "seam-test: no ast-grep (brew install ast-grep); nothing to run" >&2
-  exit 1
-fi
 
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
@@ -87,6 +83,17 @@ expect rev/three-dot "$(seam "$base..." | cmp -s - "$t" && echo same)" "same"
 expect rev/one-commit "$(seam "$head" | cmp -s - "$t" && echo same)" "same"
 expect rev/bad-ref "$(seam nope..HEAD 2>&1; echo "rc=$?")" "$(printf 'seam: nope is not a commit\nrc=2')"
 expect rev/bad-single "$(seam nope 2>&1 >/dev/null; echo "rc=$?")" "$(printf 'seam: nope is not a commit\nrc=2')"
+
+# A table is the same from anywhere in the repo, and from a bare clone of it. And
+# a path git would quote is still read by definition.
+expect rev/from-a-subdirectory "$(mkdir -p sub/dir; cd sub/dir && seam "$base..$head" | cmp -s - "$t" && echo same)" "same"
+git clone -q --bare . "$tmp/bare.git"
+expect rev/from-a-bare-repo "$(cd "$tmp/bare.git" && seam "$base..$head" | cmp -s - "$t" && echo same)" "same"
+qp=$tmp/quoted
+mkdir "$qp" && (cd "$qp" && git init -q . && git config user.email t@t && git config user.name t &&
+  mkdir 'a dir' && printf 'export function one() { return 1; }\n' > 'a dir/é.ts' && git add . && git commit -qm base &&
+  printf 'export function one() { return 2; }\n' > 'a dir/é.ts' && git commit -qam head)
+expect rev/a-quoted-path "$(cd "$qp" && seam HEAD | cut -f1-3)" "$(printf 'a dir/é.ts\tfn\tone')"
 
 # --- the graph
 g=$tmp/graph.json
@@ -170,39 +177,14 @@ if [ -n "$chrome" ] && [ -x "$chrome" ]; then
   expect page/names-whole "$(grep -o '<text [^>]*>[^<]*</text>' "$tmp/dom.html" | grep -c '\u2026')" "0"
 fi
 
-# --- Claude's notes (seam --gloss), against a stand-in for Claude Code that
-# answers the schema from the ids the prompt gave it and keeps the prompt.
-mkdir -p "$tmp/stub"
-cat > "$tmp/stub/claude" <<'EOF'
-#!/bin/sh
-cat > "$STUB_PROMPT"
-n=$(grep -c '^## s' "$STUB_PROMPT")
-jq -n --argjson n "$n" '{is_error: false, structured_output: {spine: "the spine of it",
-  symbols: [range(1; $n + 1) | {id: "s\(.)", does: "does \(.)", gloss: "gloss \(.)"}],
-  edges: [{from: "s1", to: "s2", gloss: "an edge"}], order: [{id: "s1", why: "read me first"}]}}'
-EOF
-chmod +x "$tmp/stub/claude"
-gl=$tmp/gloss.json
-SEAM_CLAUDE=$tmp/stub/claude STUB_PROMPT=$tmp/prompt seam "$base..$head" --gloss > "$gl"
-first=$(jq -r '.definitions[0].id' "$g")
-expect gloss/spine "$(jq -r .spine "$gl")" "the spine of it"
-expect gloss/every-definition "$(jq -r '.defs | length' "$gl")" "$(jq -r '.definitions | length' "$g")"
-expect gloss/ids-mapped-back "$(jq -r --arg id "$first" '.defs[$id].does' "$gl")" "does 1"
-expect gloss/order-mapped-back "$(jq -r '.order[0].id' "$gl")" "$first"
-expect gloss/edge-mapped-back "$(jq -r '.edges | keys[0]' "$gl")" "$first>$(jq -r '.definitions[1].id' "$g")"
-expect gloss/prompt-names-by-sn "$(grep -c "^## s1 $first\$" "$tmp/prompt")" "1"
-expect gloss/prompt-has-diffs "$(grep -c '^    [-+ ]' "$tmp/prompt" | awk '{ print ($1 > 0) }')" "1"
-# Asked for, it runs with no setting at all: --gloss is the opting in.
-expect gloss/asked-is-opted-in "$(git config --get seam.gloss || echo unset)" "unset"
-# --html --gloss into a file waits for the notes and carries them, with no
-# setting and nothing kept.
-rm -rf "$(git rev-parse --git-common-dir)/seam-gloss"
-SEAM_CLAUDE=$tmp/stub/claude STUB_PROMPT=$tmp/prompt seam "$base..$head" --html --gloss > "$tmp/both.html"
-expect html/gloss-asked "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/both.html" | sed 's|<\\/|</|g' | jq -r '.gloss.spine')" "the spine of it"
-# Kept by the two commits: asked again, it answers without Claude at all.
-expect gloss/kept "$(SEAM_CLAUDE=false seam "$base..$head" --gloss | jq -r .spine)" "the spine of it"
-# The page carries a kept gloss, and draws it.
-seam "$base..$head" --html > "$tmp/glossed.html"
+# --- what something else knows: --with merges a JSON object into the graph, so
+# notes and callers reach every renderer without seam asking anyone for them.
+printf '{"gloss":{"spine":"the spine of it","defs":{},"edges":{},"order":[{"id":"lib.ts#run","why":"read me first"}]}}' > "$tmp/with.json"
+expect with/json "$(seam "$base..$head" --json --with "$tmp/with.json" | jq -r .gloss.spine)" "the spine of it"
+expect with/wants-a-file "$(seam "$base..$head" --with 2>&1; echo "rc=$?")" "$(printf 'seam: --with wants a file\nrc=2')"
+printf '[]' > "$tmp/notobject.json"
+expect with/wants-an-object "$(seam "$base..$head" --with "$tmp/notobject.json" 2>&1; echo "rc=$?")" "$(printf 'seam: %s is not a JSON object\nrc=2' "$tmp/notobject.json")"
+seam "$base..$head" --html --with "$tmp/with.json" > "$tmp/glossed.html"
 expect html/carries-gloss "$(sed -n '/id="seam-data"/s/.*application\/json">//p' "$tmp/glossed.html" | sed 's|<\\/|</|g' | jq -r '.gloss.spine')" "the spine of it"
 if [ -n "$chrome" ] && [ -x "$chrome" ]; then
   "$chrome" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom "file://$tmp/glossed.html" > "$tmp/gdom.html" 2>/dev/null
@@ -210,6 +192,9 @@ if [ -n "$chrome" ] && [ -x "$chrome" ]; then
   expect page/draws-where-to-start "$(grep -c 'class="quip">read me first<' "$tmp/gdom.html")" "1"
   expect page/glossed-no-error "$(grep -o '<b>The page could not draw[^<]*' "$tmp/gdom.html" | wc -l | tr -d ' ')" "0"
 fi
+# --json --diffs: each definition's own diff, for whatever writes a prompt from it.
+expect json/diffs "$(seam "$base..$head" --json --diffs | jq -r '.definitions[] | select(.name == "run") | .diff | map(select(.mark == "+")) | length')" "1"
+expect json/no-diffs-unasked "$(jq -r '.definitions[0] | has("diff")' "$g")" "false"
 
 # --- Rust and Python. The same model through another language file: a struct,
 # an impl named by what it implements, a doc comment and an attribute riding
@@ -375,14 +360,6 @@ git add . && git commit -qm head && hbhead=$(git rev-parse HEAD)
 expect base/tiny-folds-forward "$(seam "$hbbase..$hbhead" --split --json | jq -r '[.slices[] | .kind + ":" + (.definitions | map(sub("^.*#"; "")) | sort | join(","))] | join(" / ")')" "story:K,a1,a2,a3 / story:b1,b2,b3"
 cd "$tmp" || exit 1
 
-# --- what has to wait (--last): the story changing a.ts goes after fb's,
-# and a later part of the same piece goes with what it leans on.
-cd "$sp" || exit 1
-expect last/moves-the-story "$(seam "$spbase..$sphead" --split --json --last a.ts | jq -r '[.slices[] | .name] | join(" ")')" "Mode fb1 fa1 c.ts and notes.md"
-expect last/unmatched-is-nothing "$(seam "$spbase..$sphead" --split --json --last nope.ts | jq -r '[.slices[] | .name] | join(" ")')" "Mode fa1 fb1 c.ts and notes.md"
-cd "$hs" || exit 1
-expect last/takes-its-piece "$(seam "$hsbase..$hshead" --split --json --last send.ts | jq -r '[.slices[] | (.definitions | sort | map(sub("^.*#"; "")) | join(","))] | join(" / ")')" "Draft,send / make,mint"
-
 # --- a provider only --split waits for (#seam: split). What it says from one
 # changed definition to another is an edge the split keeps: here, that fb1
 # reads something fa1 added, which joins the two stories. It is not run to
@@ -404,26 +381,6 @@ seam "$spbase..$sphead" --split --json > /dev/null 2>&1
 expect split-refs/asked-once "$(wc -l < "$FIELDS_RUNS" | tr -d ' ')" "1"
 rm -rf .seam "$(git rev-parse --git-common-dir)/seam-refs-split"
 unset FIELDS_RUNS
-
-# --- titles: with glossing asked for, every slice with no commit of its own to
-# take a message from is named by Claude, here a stand-in that names slice n
-# "title n" and keeps the prompt.
-cat > "$tmp/stub/titles" <<'EOF'
-#!/bin/sh
-cat > "$STUB_PROMPT"
-jq -n --argjson ns "$(sed -n 's/^## Slice \([0-9]*\): name this$/\1/p' "$STUB_PROMPT" | jq -s -c .)" \
-  '{is_error: false, structured_output: {slices: [$ns[] | {n: ., subject: "title \(.)", body: "why \(.) matters, said at some length so that the body has to be wrapped before it becomes a commit message"}]}}'
-EOF
-chmod +x "$tmp/stub/titles"
-expect titles/off "$(SEAM_CLAUDE=$tmp/stub/titles seam "$spbase..$sphead" --split --json | jq -r '[.slices[].title // empty] | length')" "0"
-expect titles/drawn "$(SEAM_COLOR=0 SEAM_CLAUDE=$tmp/stub/titles STUB_PROMPT=$tmp/tprompt seam "$spbase..$sphead" --split --gloss 2>/dev/null | grep -c '^ *2  title 2  ')" "1"
-expect titles/prompt-has-the-change "$(grep -c '^    +' "$tmp/tprompt" | awk '{ print ($1 > 0) }')" "1"
-expect titles/kept "$(SEAM_CLAUDE=false seam "$spbase..$sphead" --split --json --gloss | jq -r '.slices[1].title.subject')" "title 2"
-SEAM_CLAUDE=false seam "$spbase..$sphead" --split --gloss --branch titled > /dev/null 2>&1
-expect titles/branch-subject "$(git log -1 --format=%s titled~2)" "title 2"
-expect titles/branch-body "$(git log -1 --format=%b titled~2 | awk '{ if (length > m) m = length } END { print (m <= 72) }')" "1"
-cd "$hs" || exit 1
-expect titles/commits-need-none "$(SEAM_CLAUDE=false seam "$hsbase..$hshead" --split --json --gloss 2>/dev/null | jq -r '[.slices[].title // empty] | length')" "0"
 
 # --- references from outside what seam can see. An edge here is a name inside
 # a changed definition, so an import is invisible to it: a type that moves
@@ -449,17 +406,16 @@ expect refs/without-refuses "$(seam "$rfbase..$rfhead" --split --branch a 2>&1 |
 mkdir -p .seam/references
 printf '#!/bin/sh\nprintf "one.ts\\tgen.ts#Mode\\tiface\\timports it\\n"\n' > .seam/references/toy
 chmod +x .seam/references/toy
-expect refs/in-the-graph "$(seam "$rfbase..$rfhead" --json | jq -r '.references[] | "\(.from) \(.to) \(.facet) \(.note) \(.via)"')" "one.ts gen.ts#Mode iface imports it toy"
 # The importer now goes with what it imports, and the order stands up.
 expect refs/places-the-file "$(seam "$rfbase..$rfhead" --split --json | jq -r '[.slices[] | select(.kind != "rest") | .files[].path] | index("one.ts") != null')" "true"
 expect refs/no-longer-refuses "$(seam "$rfbase..$rfhead" --split --branch b 2>&1 | grep -c 'does not stand up')" "0"
 # A provider that fails says nothing rather than stopping the read.
 printf '#!/bin/sh\nexit 3\n' > .seam/references/broken; chmod +x .seam/references/broken
-expect refs/a-broken-one-is-quiet "$(seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "1"
+expect refs/a-broken-one-is-quiet "$(seam "$rfbase..$rfhead" --split --json | jq -r '[.slices[] | select(.kind != "rest") | .files[].path] | index("one.ts") != null')" "true"
 rm -rf .seam
 # The TypeScript import provider seam ships finds the same thing by itself,
 # and a file of its name that runs nothing turns it off.
-expect refs/shipped-typescript "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '[.references[] | select(.via == "typescript") | .from] | unique | join(" ")')" "one.ts use.ts"
+expect refs/shipped-typescript "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --split --json | jq -r '[.slices[] | select(.kind != "rest") | .files[].path] | index("one.ts") != null')" "true"
 # An import the change did not touch places nothing: a file that only gained
 # a line of its own still imports what it did at the base, and built there.
 ru=$tmp/ru
@@ -471,43 +427,33 @@ git add -A && git commit -qm base && rubase=$(git rev-parse HEAD)
 printf 'export const Mode = { A: "a", B: "b" };\n' > mode.ts
 printf 'import { Mode } from "./mode";\nconsole.log(Mode.A, 1);\n' > same.ts
 git add -A && git commit -qm head && ruhead=$(git rev-parse HEAD)
-expect refs/unchanged-import "$(XDG_CONFIG_HOME=$tmp/bare seam "$rubase..$ruhead" --json | jq -r '.references | length')" "0"
+expect refs/unchanged-import "$(XDG_CONFIG_HOME=$tmp/bare seam "$rubase..$ruhead" --split --json | jq -r '[.slices[] | select(.kind == "rest") | .files[].path] | index("same.ts") != null')" "true"
 cd "$rf" || exit 1
 mkdir -p .seam/references && : > .seam/references/typescript
-expect refs/shipped-turned-off "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --json | jq -r '.references | length')" "0"
+expect refs/shipped-turned-off "$(XDG_CONFIG_HOME=$tmp/bare seam "$rfbase..$rfhead" --split --json | jq -r '.slices[-1].files[].path')" "one.ts"
 rm -rf .seam
-# A lazy provider is never run while reading: --callers runs it, keeps what it
-# said by the two commits, and the graph, the score and --md carry it from then.
-mkdir -p .seam/references
-printf '#!/bin/sh\n#seam: lazy\ncat >/dev/null\nprintf "far.ts#caller\\tuse.ts#pick\\tbody\\tTS2554: Expected 1 arguments\\t9\\t1\\n"\nprintf "ok.ts#fine\\tuse.ts#pick\\tbody\\t\\t3\\t\\n"\n' > .seam/references/slow
-chmod +x .seam/references/slow
-expect callers/not-while-reading "$(seam "$rfbase..$rfhead" --json | jq -r '(.references | length), (.callers // "none")' | tr '\n' ' ')" "0 none "
-expect callers/asked "$(seam "$rfbase..$rfhead" --callers | jq -r '.[] | "\(.from) \(.to) \(.line) \(.breaks) \(.via)"' | tr '\n' ';')" "far.ts#caller use.ts#pick 9 true slow;ok.ts#fine use.ts#pick 3 false slow;"
-expect callers/kept "$(seam "$rfbase..$rfhead" --json | jq -r '.callers | length')" "2"
-expect callers/scored "$(seam "$rfbase..$rfhead" --score --brief)" "breaks callers outside it · breaks 1"
-expect callers/in-md "$(seam "$rfbase..$rfhead" --md | grep -c '✗ caller (far.ts:9) — TS2554')" "1"
-expect callers/on-the-page "$(seam "$rfbase..$rfhead" --html | sed -n '/id="seam-data"/s/.*application\/json">//p' | sed 's|<\\/|</|g' | jq -r '.callers | length')" "2"
+# Callers outside the change are something else's to find. Handed over, the graph,
+# the score and the page all carry them, and a lazy provider moves no slice.
+printf '{"callers":[{"from":"far.ts#caller","to":"use.ts#pick","facet":"body","note":"TS2554: Expected 1 arguments","via":"slow","line":9,"breaks":true},{"from":"ok.ts#fine","to":"use.ts#pick","facet":"body","note":null,"via":"slow","line":3,"breaks":false}]}' > "$tmp/callers.json"
+expect callers/carried "$(seam "$rfbase..$rfhead" --json --with "$tmp/callers.json" | jq -r '.callers | length')" "2"
+expect callers/not-unasked "$(seam "$rfbase..$rfhead" --json | jq -r '.callers // "none"')" "none"
+expect callers/scored "$(seam "$rfbase..$rfhead" --score --brief --with "$tmp/callers.json")" "breaks callers outside it · breaks 1"
+expect callers/on-the-page "$(seam "$rfbase..$rfhead" --html --with "$tmp/callers.json" | sed -n '/id="seam-data"/s/.*application\/json">//p' | sed 's|<\\/|</|g' | jq -r '.callers | length')" "2"
 if [ -n "$chrome" ] && [ -x "$chrome" ]; then
-  seam "$rfbase..$rfhead" --html > "$tmp/callers.html"
+  seam "$rfbase..$rfhead" --html --with "$tmp/callers.json" > "$tmp/callers.html"
   "$chrome" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom "file://$tmp/callers.html" > "$tmp/cdom.html" 2>/dev/null
   expect page/draws-breaks-badge "$(grep -c '>breaks 1</text>' "$tmp/cdom.html")" "1"
   expect page/draws-breaks-list "$(grep -c '>Breaks outside the change<' "$tmp/cdom.html")" "1"
   expect page/callers-no-error "$(grep -o '<b>The page could not draw[^<]*' "$tmp/cdom.html" | wc -l | tr -d ' ')" "0"
 fi
-# One that fails is asked again next time rather than kept as having found nothing.
-rm -rf "$(git rev-parse --git-common-dir)/seam-callers"
-printf '#!/bin/sh\n#seam: lazy\nexit 1\n' > .seam/references/down; chmod +x .seam/references/down
-seam "$rfbase..$rfhead" --callers >/dev/null 2>&1
-expect callers/failed-not-kept "$(ls "$(git rev-parse --git-common-dir)/seam-callers" 2>/dev/null | wc -l | tr -d ' ')" "0"
-rm -rf .seam "$(git rev-parse --git-common-dir)/seam-callers"
 # A tool built on seam brings its own in a directory of SEAM_PATH, read after
 # the repo's and this user's: here a kinds command and a provider, and a spaced
 # path, since a directory may have one.
-mkdir -p "$tmp/a tool/references"
+mkdir -p "$tmp/a tool" "$tmp/a tool's refs/references"
 printf '#!/bin/sh\nsed "s/$/\\tcfg/"\n' > "$tmp/a tool/kinds" && chmod +x "$tmp/a tool/kinds"
-printf '#!/bin/sh\nprintf "one.ts\\tgen.ts#Mode\\tiface\\tfrom the tool\\n"\n' > "$tmp/a tool/references/tool" && chmod +x "$tmp/a tool/references/tool"
+printf '#!/bin/sh\nprintf "one.ts\\tgen.ts#Mode\\tiface\\tfrom the tool\\n"\n' > "$tmp/a tool's refs/references/tool" && chmod +x "$tmp/a tool's refs/references/tool"
 expect path/kinds "$(SEAM_PATH="$tmp/nowhere:$tmp/a tool" seam "$rfbase..$rfhead" --json | jq -r '[.definitions[].box.kind] | unique | join(" ")')" "cfg"
-expect path/references "$(SEAM_PATH="$tmp/a tool" seam "$rfbase..$rfhead" --json | jq -r '.references[] | select(.via == "tool") | .note')" "from the tool"
+expect path/references "$(SEAM_PATH="$tmp/a tool's refs" seam "$rfbase..$rfhead" --split --json | jq -r '[.slices[] | select(.kind != "rest") | .files[].path] | index("one.ts") != null')" "true"
 # What a file is, from an executable .seam/kinds, the way SEAM_KINDS says it.
 mkdir -p .seam && printf '#!/bin/sh\nsed "s/$/\\tgen/"\n' > .seam/kinds && chmod +x .seam/kinds
 expect kinds/from-the-repo "$(seam "$rfbase..$rfhead" --json | jq -r '[.definitions[].box.kind] | unique | join(" ")')" "gen"
@@ -623,8 +569,10 @@ printf 'create table a (x int, y int);\n' > schema.sql
 printf 'export const Row = { x: 1, y: 2 };\nexport function read(): number { return Row.x + Row.y; }\n' > row.ts
 git add -A && git commit -qm head && fshead=$(git rev-parse HEAD)
 expect split/first-absent-is-last "$(seam "$fsbase..$fshead" --split --json | jq -r '.slices[-1].files[].path')" "schema.sql"
-expect split/first-leads "$(seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '.slices[0] | "\(.kind) \(.files[].path)"')" "first schema.sql"
-expect split/first-renumbers "$(seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '[.slices[].n] | join(",")')" "1,2"
+mkdir -p .seam && printf '*.sql\n' > .seam/first
+expect split/first-leads "$(seam "$fsbase..$fshead" --split --json | jq -r '.slices[0] | "\(.kind) \(.files[].path)"')" "first schema.sql"
+expect split/first-renumbers "$(seam "$fsbase..$fshead" --split --json | jq -r '[.slices[].n] | join(",")')" "1,2"
+rm -rf .seam
 expect split/first-from-file "$(mkdir -p .seam && printf '# comment\n*.sql\n' > .seam/first
   seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].kind')" "first"
 # first.local wins over first, so a repo shipping one does not take over yours.
@@ -637,10 +585,12 @@ expect split/first-no-warning "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | 
 rm -rf .seam
 expect split/first-warns-without "$(SEAM_COLOR=0 seam "$fsbase..$fshead" --split | grep -c 'has to go first')" "1"
 # A pattern is matched against the change, not against the working directory.
-expect split/first-not-globbed "$(mkdir -p sub && seam "$fsbase..$fshead" --split --json --first '*.sql' | jq -r '.slices[0].files[].path')" "schema.sql"
-expect split/first-writes "$(seam "$fsbase..$fshead" --split --branch led --first '*.sql' >/dev/null 2>&1
+mkdir -p .seam && printf '*.sql\n' > .seam/first
+expect split/first-not-globbed "$(mkdir -p sub && seam "$fsbase..$fshead" --split --json | jq -r '.slices[0].files[].path')" "schema.sql"
+expect split/first-writes "$(seam "$fsbase..$fshead" --split --branch led >/dev/null 2>&1
   git show --stat --format= led~1 | head -1 | tr -s ' ')" " schema.sql | 2 +-"
 expect split/first-ends-at-head "$(git diff-tree --quiet led "$fshead" && echo same || echo different)" "same"
+rm -rf .seam
 # --- a slice too small for a commit of its own goes in with the one before
 # it. Both tests have to bite: twelve lines out of six hundred is an offcut,
 # twelve out of forty is the change.
@@ -692,32 +642,11 @@ expect split/check-wants-a-command "$(seam "$smhead..$smtwo" --split --check 2>&
 
 cd "$tmp" || exit 1
 
-expect split/first-wants-a-pattern "$(seam "$fsbase..$fshead" --split --first 2>&1; echo "rc=$?")" "$(printf 'seam: --first wants a path pattern\nrc=2')"
 cd "$tmp" || exit 1
 cd "$tmp" || exit 1
-
-# --- the reading order (share/order.jq), on graphs built by hand: each word
-# is from>to, a mention of to in from, with :i when it is in the signature.
-order() {
-  printf '%s\n' "$@" | jq -R -s -c '
-    [split("\n")[] | select(length > 0) | capture("^(?<from>[^>]+)>(?<to>[^:]+)(?<i>:i)?$")] as $e
-    | {definitions: [[$e[] | .from, .to] | unique | .[] | {id: ("a.ts#" + .), path: "a.ts", name: ., box: {kind: "source"}}],
-       edges: [$e[] | {from: ("a.ts#" + .from), to: ("a.ts#" + .to), facet: (if .i then "iface" else "body" end)}]}' |
-    jq -f "$root/share/order.jq" |
-    jq -r '.reading | def n: sub("^a.ts#"; ""); "\([.threads[][] | n] | join(" ")) / \(.loose) / \([.unmet[] | n] | join(" "))"'
-}
-expect order/ends-before-threads "$(order 'A>B' 'A>C' 'A>D' 'B>E')" "A C D B E / 3 / "
-expect order/signature-first "$(order 'A>B' 'A>C:i')" "A C B / 2 / "
-expect order/the-last-thread-goes-on "$(order 'A>B' 'A>C' 'B>D' 'C>F' 'D>E')" "A B D E C F / 2 / "
-expect order/a-circle "$(order 'B>C' 'C>B' 'C>D')" "B C D / 1 / B"
-expect order/the-circle-in-front "$(order 'X>Y' 'Y>X' 'Y>B' 'B>C' 'C>B')" "X Y B C / 1 / X"
-expect order/in-md "$(seam "$base..$head" --md | grep -c '^Read this way, at most')" "1"
 
 # --- the language files
-expect lang/languages "$(seam --languages)" "$(printf 'python.yml\t.py .pyi\tpython\nrust.yml\t.rs\trust\ntypescript.yml\t.ts .tsx\ttypescript tsx')"
 expect lang/rules "$(seam --rules | grep -c '^language:')" "41"
-expect lang/awk "$(seam --awk hunks | grep -c 'function shift')" "1"
-expect lang/share "$(test -f "$(seam --share)/decls.jq" && echo yes)" "yes"
 # A rule file in the repo replaces the one seam ships under that name: this one
 # reads function declarations and nothing else.
 mkdir -p .seam/languages

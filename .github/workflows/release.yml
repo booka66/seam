@@ -1,0 +1,41 @@
+# A tag vX.Y.Z builds seam for each platform and attaches a tarball to the tag's
+# release, which install.sh fetches.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, musl: x86_64-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, musl: aarch64-linux-musl }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+      - run: |
+          name=seam-${GITHUB_REF_NAME#v}-${{ matrix.target }}
+          mkdir -p "$name/bin"
+          cp target/${{ matrix.target }}/release/seam bin/seam-split "$name/bin/"
+          cp -R share "$name/share"
+          tar -czf "$name.tar.gz" "$name"
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" --verify-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

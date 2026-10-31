@@ -5,8 +5,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/booka66/seam/main/install.sh | sh
 #
-# Run again, it updates. seam finds share/ beside its own bin/, so the two
-# stay together and what goes on PATH is a script that runs it, not a link.
+# Run again, it updates. A release is one program per platform, built when the
+# tag is pushed; with none for this machine, it builds from the source with cargo.
+# seam-split finds share/ beside its own bin/, so they stay together and what goes
+# on PATH is a script that runs seam, not a link.
 # ~/.local/bin is put on PATH in the startup file of the shell you use, so a
 # new terminal has seam without a "put this on PATH" step. The release is
 # unpacked beside the one there and swapped in; VERSION in it says which it
@@ -20,8 +22,7 @@ bin=${SEAM_BIN:-$HOME/.local/bin}
 die() { printf 'seam: %s\n' "$1" >&2; exit 1; }
 for c in curl tar; do command -v "$c" >/dev/null 2>&1 || die "needs $c"; done
 
-# The newest release is the highest vX.Y.Z tag: tags alone, no GitHub
-# release to publish. Asked of GitHub's API over curl, since a Mac that has
+# The newest release is the highest vX.Y.Z tag. Asked of GitHub's API over curl, since a Mac that has
 # never had the Command Line Tools has only a git that offers to install
 # them; git only when the API says nothing (60 asks an hour an address).
 newest() { sed -n "s|$1|\\1|p" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1; }
@@ -44,9 +45,25 @@ else
     mkdir -p "$(dirname "$dest")"
     tmp=$(mktemp -d "$(dirname "$dest")/.seam.XXXXXX")
     trap 'rm -rf "$tmp"' EXIT
-    curl -fsSL "$repo/archive/refs/tags/v$version.tar.gz" | tar -xzf - -C "$tmp" ||
-      die "could not download seam $version"
-    new=$tmp/seam-$version
+    case $(uname -m) in arm64|aarch64) arch=aarch64 ;; x86_64|amd64) arch=x86_64 ;; *) arch= ;; esac
+    case $(uname -s) in Darwin) sys=apple-darwin ;; Linux) sys=unknown-linux-musl ;; *) sys= ;; esac
+    target=$arch-$sys
+    new=$tmp/seam-$version-$target
+    if [ -n "$arch" ] && [ -n "$sys" ] &&
+      curl -fsSL "$repo/releases/download/v$version/seam-$version-$target.tar.gz" 2>/dev/null | tar -xzf - -C "$tmp" 2>/dev/null &&
+      [ -x "$new/bin/seam" ]; then
+      :
+    else
+      # No build for this machine, or the tag is newer than its builds. The source
+      # either is what runs (a release before the Rust one) or wants cargo.
+      curl -fsSL "$repo/archive/refs/tags/v$version.tar.gz" | tar -xzf - -C "$tmp" || die "could not download seam $version"
+      new=$tmp/seam-$version
+      if [ -f "$new/Cargo.toml" ]; then
+        command -v cargo >/dev/null 2>&1 || die "no build of seam $version for $(uname -s) $(uname -m), and no cargo to make one"
+        printf 'seam: building %s from source\n' "$version"
+        (cd "$new" && cargo build --release --locked --quiet && cp target/release/seam bin/seam && rm -rf target) || die "could not build seam $version"
+      fi
+    fi
     [ -x "$new/bin/seam" ] || die "seam $version did not unpack as expected"
     printf '%s\n' "$version" > "$new/VERSION"
     [ -e "$dest" ] && mv "$dest" "$tmp/old"
@@ -93,6 +110,9 @@ else
   case $rc in "$HOME"/*) rcname="~/${rc#"$HOME"/}" ;; *) rcname=$rc ;; esac
   printf 'Added %s to PATH in %s; open a new terminal, or run: %s\n' "$bin" "$rcname" "$pline"
 fi
-for c in ast-grep jq; do
-  command -v "$c" >/dev/null 2>&1 || printf 'seam needs %s too: brew install %s, or your package manager\n' "$c" "$c"
+for c in git jq; do
+  command -v "$c" >/dev/null 2>&1 || case $c in
+    git) printf 'seam needs git: brew install git, or your package manager\n' ;;
+    jq) printf 'seam --split needs jq: brew install jq, or your package manager\n' ;;
+  esac
 done

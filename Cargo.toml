@@ -1,0 +1,33 @@
+[package]
+name = "seam"
+version = "0.14.0"
+edition = "2021"
+description = "A change, read by definition rather than by file."
+repository = "https://github.com/booka66/seam"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "seam"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to the engine and grammars the shell version ran, so a definition is
+# what it was: ast-grep's rule engine, and only the grammars seam ships.
+ast-grep-core = "=0.45.3"
+ast-grep-config = "=0.45.3"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-python = "=0.25.0"
+imara-diff = "0.2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

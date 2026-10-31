@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>seam</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
     --ground: #f7f6f3;
@@ -37,9 +34,9 @@
     --tk-kw: #9d0006; --tk-decl: #af3a03; --tk-str: #79740e; --tk-num: #8f3f71;
     --tk-com: #928374; --tk-type: #b57614; --tk-fn: #427b58; --tk-meta: #076678;
     --panel-w: 440px;
-    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-    --display: "Instrument Serif", Georgia, serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ui: system-ui, -apple-system, sans-serif;
+    --display: Georgia, serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -443,7 +440,7 @@
   function textW(t) {
     if (!MEASURE) {
       MEASURE = document.createElement("canvas").getContext("2d");
-      MEASURE.font = "12.5px 'IBM Plex Mono', ui-monospace, Menlo, monospace";
+      MEASURE.font = "12.5px ui-monospace, Menlo, monospace";
     }
     return MEASURE.measureText(t).width;
   }
@@ -484,6 +481,7 @@
       try { g = JSON.parse(text); } catch (err) { d.appendChild(h("p", "hint", "That is not JSON seam wrote.")); return; }
       d.remove(); document.body.style.overflow = "hidden"; start(g);
     }
+    window.seamLoad = load;
   }
 
   function start(g) {

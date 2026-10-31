@@ -164,7 +164,7 @@ def tested:
     end)) as $cut
 | ([$src[] | select($cut.taken[.] | not)]) as $left
 # A piece is a story, or one a commit, when the branch's commits split it.
-| ([[pieces($left; $E)[] | select(length >= 2)] | to_entries[] | .key as $pi | .value as $C
+| ([pieces($left; $E)[] | select(length >= 2) | . as $C
     | ($C | map({key: ., value: true}) | from_entries) as $inC
     | settle($C; $inC; $own; $outnew) as $e
     | ($C | group_by($e[.]))[] | . as $P
@@ -174,13 +174,13 @@ def tested:
        | if length == 0 then [$defs | max_by(($out[.id] // []) | length)] else . end
        | sort_by(-lines) | map(.name)) as $roots
     | {kind: "story", roots: $roots, definitions: ($defs | sort_by(-lines) | map(.id)),
-       size: ($defs | map(lines) | add), commits: [$e[$P[0]]], pieces: [$pi]}]
+       size: ($defs | map(lines) | add), commits: [$e[$P[0]]]}]
    | sort_by(.commits[0], -.size)) as $found
 | ((if ($cut.hubs | length) == 0 then [] else
       [($cut.taken | keys | map($byid[.])) as $defs
        | {kind: "base", roots: ($cut.hubs | map($byid[.].name)),
           definitions: ($defs | sort_by(-lines) | map(.id)), size: ($defs | map(lines) | add),
-          commits: [], pieces: []}] end
+          commits: []}] end
     + $found)
    # The small ones folded into the slice before them, which for a story is
    # a bigger one from the same commit when there is one: the stories are in
@@ -191,19 +191,8 @@ def tested:
        then .[:-1] + [.[-1] + {roots: (.[-1].roots + $s.roots),
                                definitions: (.[-1].definitions + $s.definitions),
                                size: (.[-1].size + $s.size),
-                               commits: (.[-1].commits + $s.commits),
-                               pieces: (.[-1].pieces + $s.pieces)}]
+                               commits: (.[-1].commits + $s.commits)}]
        else . + [$s] end)
-   # What has to wait (--last): a story changing one of those paths goes after
-   # every other, and so does any later slice of the same piece, which leans
-   # on it. Nothing else can: pieces share no edges, and the base leads.
-   | ((($ARGS.named.last // [[]])[0]) | map({key: ., value: true}) | from_entries) as $late
-   | reduce .[] as $s ({keep: [], late: [], held: {}}; . as $st
-       | if $s.kind == "story" and (any($s.definitions[]; $late[$byid[.].path])
-                                    or any($s.pieces[]; $st.held[tostring]))
-         then .late += [$s] | .held += ($s.pieces | map({key: tostring, value: true}) | from_entries)
-         else .keep += [$s] end)
-   | .keep + .late
    # A foundation too small for a commit of its own, by the same two tests,
    # goes into the first slice that leans on it: nothing before that one
    # needs it, so it can wait that long, and a two-line commit a reviewer
@@ -213,7 +202,7 @@ def tested:
        .[0] as $b | ($b.definitions | map({key: ., value: true}) | from_entries) as $inb
        | (first(range(1; length) as $i | select(any(.[$i].definitions[]; any(($out[.] // [])[]; $inb[.]))) | $i) // 1) as $k
        | .[1:] | .[$k - 1] |= (. + {roots: (.roots + $b.roots), definitions: ($b.definitions + .definitions),
-                                     size: (.size + $b.size), commits: (.commits + $b.commits), pieces: (.pieces + $b.pieces)})
+                                     size: (.size + $b.size), commits: (.commits + $b.commits)})
      else . end
    | to_entries | map(.value + {n: (.key + 1), paths: (.value.definitions | map($byid[.].path) | unique)})) as $slices
 | (reduce $slices[] as $s ({}; reduce $s.definitions[] as $d (.; .[$d] = $s.n))) as $slot
@@ -289,7 +278,7 @@ def tested:
         lines: ($size[$s.n | tostring] // 0)}]
    + [$sweeps | to_entries[] | . as $e | ($nstories + 1 + $e.key) as $sn
       | {n: $sn, kind: "sweep",
-         name: "the same edit in " + ($e.value | length | tostring) + " files",
+         name: ("the same edit in " + ($e.value | length | tostring) + " files"),
          roots: [], definitions: [],
          files: [$placed[] | select(.n == $sn) | {path, shared, via}],
          lines: ($size[$sn | tostring] // 0)}]
@@ -309,8 +298,8 @@ def tested:
 # migration or a schema, so it has no edge from the code to them and puts them
 # last, where nothing in the graph reaches. It does not guess which way round
 # that is — a migration wants to go first and a test file wants to go last and
-# both are unreadable to seam. What the repo says goes first (--first, or a
-# pattern a line in .seam/first) is lifted into a slice before slice one.
+# both are unreadable to seam. What the repo says goes first (a pattern a line
+# in .seam/first) is lifted into a slice before slice one.
 # Only a file seam read no definitions from can be lifted, so no definition is
 # ever taken out of the story it belongs to.
 | (($ARGS.named.first // []) | map({key: ., value: true}) | from_entries) as $pull
@@ -365,8 +354,7 @@ def tested:
 | ($pairs | group_by(.n) | map(max_by(.lines) | select(.lines * 2 > .tot and .lines == $whole[.c])
                             | {key: (.n | tostring), value: $cm[.c]}) | from_entries) as $msg
 | ($slices | map(if $msg[.n | tostring] then .commit = $msg[.n | tostring] else . end)) as $slices
-# The plan. Drawn by seam (draw_split) from this, after the titles, if any,
-# are in.
+# The plan. Drawn by seam (draw_split) from this.
 | {rev: $g.rev, base: $g.base, head: $g.head,
    totals: {definitions: ($D | length), edges: ($E | length), files: ($paths | length)},
    slices: $slices, shared: $shared}

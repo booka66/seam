@@ -6,26 +6,22 @@ A change, read by definition rather than by file.
 curl -fsSL https://raw.githubusercontent.com/booka66/seam/main/install.sh | sh
 ```
 
-That puts the newest release in `~/.local/share/seam` and a `seam` that runs
-it in `~/.local/bin`, which it puts on your PATH; run it again to update.
-seam needs git, ast-grep and jq. Or put a clone's `bin/` on your PATH with
-`share/` beside it.
+That puts the newest release in `~/.local/share/seam` and a `seam` that runs it
+in `~/.local/bin`, which it puts on your PATH; run it again to update. seam is one
+program and needs only git; `--split` also wants jq.
 
 ```
 seam HEAD~..HEAD            the definitions the change touches, as a table
 seam HEAD~..HEAD --json     the same as a graph: definitions, edges, boxes
 seam HEAD~..HEAD --html     that graph in a page you can click through
-seam HEAD~..HEAD --gloss    Claude's few words on each definition, as json
-seam HEAD~..HEAD --callers  what a lazy provider finds outside the change, as json
-seam HEAD~..HEAD --md       the change by definition as markdown, for an agent
 seam HEAD~..HEAD --score    what makes the change hard to read, and how hard
 seam main...     --split    how to split it: one slice a story, each file placed
 seam main...     --split --branch cut   those slices as commits on a new branch
-seam main...     --split --last 'x/*'   what changes x/ after every other story
-seam main...     --split --gloss        each slice titled by Claude, for its MR
 seam worktree               what is changed against HEAD, staged or not
-seam --mr 1234              a GitLab merge request (or its URL), via glab
 ```
+
+Or read a public GitHub pull request in a browser, with nothing installed: see
+[In a browser](#in-a-browser).
 
 seam works out what a change did to the named things in it and hands that to
 whatever draws: a picker, a graph, a comment on a merge request. It ships one
@@ -48,7 +44,7 @@ signature or in a body. A mention of a definition not read yet is a loose end,
 something to keep in mind, and each step takes whatever leaves the fewest
 loose; on a tie, what the last definition read mentions before what an earlier
 one does, then a signature mention before a body one. The page says how many that is at the worst point, and
-`--json` carries the order as `reading` (`share/order.jq` has the rules). Every
+`--json` carries the order as `reading` (`src/order.rs` has the rules). Every
 definition has a tick, every thread a progress bar,
 and `space` marks one read and moves on — read state is per definition, not per
 file, and lives in that browser.
@@ -66,18 +62,14 @@ furthest, which is the best guess at what a reviewer will miss. `s` opens the
 score, drag to pan, wheel to zoom, `/` to filter, and the rest is behind the
 one button at the end of the bar.
 
-**Claude's notes**, opt in. With `git config seam.gloss true` (and Claude Code
-installed), the page also carries a few words from Haiku: what each definition does, what the change does to it, what
-each new mention is for, which entry point to read first and why, and one
-sentence on the whole change. The page never waits for them. It opens at once
-and fills them in where they go when they land, usually within ten seconds, and
-nothing you have open moves. Haiku sees only the definitions and their diffs,
-has no tools, and posts nothing. The notes are kept in the repo's git dir by the
-two commits, so a change is glossed once. `seam <rev> --gloss` prints them as
-json for any other renderer, and `--html --gloss` is the page with them for
-that run alone: asking for them either way is opting in.
-`git config seam.glossModel <id>` picks another model, and the page's menu hides
-them in that browser.
+**What else is known.** seam asks nobody anything, but `--with <file>` merges a JSON
+object into the graph before anything draws it, so what a model or a compiler knows
+reaches the page, `--json` and `--score`. `callers` lists what outside the change
+names a changed definition, and the score gains a *breaks* line. `gloss` puts a few
+words on each definition. otis's `otis-seam` fills both, Haiku's notes and tsgo's
+callers, and what is not ready yet it names as `glossFrom` or `callersFrom`, files
+beside the page, which fill in when they land. `--json --diffs` carries each
+definition's own diff, for whatever writes a prompt from it.
 
 `--html --at <id>` opens the page with that definition picked, for a renderer
 that wants to hand you from its own view to this one: the id is the one `--json`
@@ -92,6 +84,15 @@ branch while `main` is behind you. Once main has moved on, that diff is your
 change *and the undoing of every commit main has that you do not* — 21 files read
 as 1399. seam says so when it happens and points at `main...`, which is the
 branch alone.
+
+## In a browser
+
+`web/build.sh` makes `web/dist`, a folder any static host can serve: the same page,
+and `seam.wasm`, the same core the command line runs. Give it a public GitHub pull
+request, commit or compare URL, in its box or after a `#` in its link, and it fetches
+the files and reads them where you are. Nothing leaves the browser and nothing is
+installed. GitHub allows sixty asks an hour without a token, and private repos are
+not read. `node web/check.mjs` holds the two to one graph.
 
 ## The model
 
@@ -114,9 +115,9 @@ file that is (source, tests, generated, config). Each kind keeps to itself in th
 graph, because a spec mentions everything it tests and a codegen dump mentions
 everything, and neither should pull a source definition off the top level.
 
-None of this comes from a model. ast-grep parses both sides of every changed file
-seam has a language for, `git diff -U0` says which lines moved, and a definition
-is listed when a changed line falls inside it — the comment block right above it
+None of this comes from a model. tree-sitter parses both sides of every changed
+file seam has a language for, ast-grep's rules pick the definitions out, a line diff
+says which lines moved, and a definition is listed when a changed line falls inside it — the comment block right above it
 counting as inside. The text before the body is compared across the two sides,
 and that is what "the interface changed" means. Same answer every time.
 
@@ -178,11 +179,13 @@ why it is worth counting:
   that is mostly this is the cheap kind, and it is never rated.
 
 The thresholds are what a reviewer can carry, not measurements of anything, and
-they sit at the top of `share/score.jq` to be argued with.
+they sit in `src/score.rs` to be argued with.
 
 ## Splitting a branch
 
-`--split` is the score's *split the PR* line taken seriously: not how many
+`seam --split` is `bin/seam-split`, a program of its own because it is the part of
+seam that writes commits and runs what a repo asks it to: it reads the change
+through seam, and wants jq. It is the score's *split the PR* line taken seriously: not how many
 stories there are but which definition and which file goes in which one, and
 `--branch <name>` lays them down as commits.
 
@@ -308,22 +311,6 @@ three ways:
 - A file nothing else places goes with its commit's slice, before the
   directory rule.
 
-When the branch is one commit, only you know what has to wait: that the
-Commerce Agent half waits on someone else's MR and the Recover fix does not.
-`--last <pattern>` says so. A story changing a path it matches goes after
-every other story, and a later slice of the same piece goes with it, since it
-leans on it; the base still leads, because everything leans on that.
-
-A slice with no commit to take a message from is named after its entry
-point, which is a placeholder. With glossing on (`git config seam.gloss true`)
-or `--gloss` this once, Claude writes each one a subject and a body for the
-reviewer of its MR, from the changed lines of its definitions and the other
-slices around it; it has no tools and writes nothing but the answer. The
-split draws them and `--branch` commits with them. They are kept by the two
-commits and what is in each slice, so the same plan is titled once. Sonnet
-by default, since Haiku named the helper a commit extracted rather than what
-the commit was for; `git config seam.titleModel <id>` picks another.
-
 A slice that holds all of a commit, and mostly that commit, says what the
 commit said, subject and body, so a stack that mirrors the branch needs no
 rewording. A commit that went to two slices is claimed by neither, since its
@@ -345,8 +332,7 @@ brings its providers without writing into anyone's config (otis exports its
 | file | what it answers | shape |
 |---|---|---|
 | `languages/<name>.yml` | what a definition is | ast-grep rules |
-| `references/<name>` | what names what, from outside what seam reads | a command: table in, rows out |
-| `references/<name>` with `#seam: lazy` | what calls the change from outside it, and what that breaks | the same, run in the background |
+| `references/<name>` | what names what, for a split, from outside what seam reads | a command: table in, rows out |
 | `references/<name>` with `#seam: split` | what one changed definition needs of another, where no name says | the same, run only to split |
 | `kinds` | which files are tests, generated or config | a command: paths in, `path⇥kind` out |
 | `first` | what goes before everything in a split | path patterns |
@@ -366,8 +352,9 @@ make the name before them a key rather than a use (`:?` in TypeScript, `:` in
 Rust, none in Python). A language that says neither reads like TypeScript. A
 name is only looked for among definitions of its own language.
 
-Adding a language is a data file and no code; see `share/languages/`, where
-TypeScript, Rust and Python ship.
+`share/languages/` has TypeScript, Rust and Python. A language file can read any
+grammar seam is built with (`typescript`, `tsx`, `rust`, `python`) and needs no
+code. A new grammar is a dependency and a line in `src/lang.rs`.
 
 **`first`** — implemented. A path pattern a line, matched against the files in
 the change that seam read no definitions from; those go in a slice of their own
@@ -376,7 +363,7 @@ seam has no language for a migration, a schema or a lockfile, so it has no edge
 from the code to them and puts them last, where nothing in the graph reaches —
 which is the wrong way round whenever the code waits on them. It does not
 guess: a migration wants to go first and a test file wants to go last, and both
-are equally unreadable to it. `--first <pattern>` says the same for one run.
+are equally unreadable to it.
 
 ```
 # .seam/first
@@ -389,7 +376,7 @@ repo that comes to ship one does not quietly take over yours. A `.local` is
 the one of these git is not meant to see.
 
 **`references/<name>`** — implemented. A command reading the definition table
-on stdin and writing `from⇥to⇥facet⇥note` rows. Inside the change seam finds
+on stdin and writing `from⇥to⇥facet⇥note` rows. Only the split asks. Inside the change seam finds
 edges itself; the ones that matter most come from outside it and from things
 seam should never know about — a compiler, an HTTP route table, a build graph,
 a test name. An end is a definition (`path#name`, `path#Class.member`) or a
@@ -413,22 +400,6 @@ towards a coarser split rather than a wrong one, and a compiler would do
 better, which is what replacing it is for. A file of the same name that is not
 executable (an empty one will do) turns off the one seam ships.
 
-A provider whose first lines say `#seam: lazy` is one too slow to wait for, like
-a compiler finding every caller in a monorepo. seam never runs it while reading
-a change: `seam <rev> --callers` does, keeps what it says in the repo's git dir
-by the two commits, and from then on `--json`, `--score`, `--md` and the page
-all carry it. `--html` starts it in the background and fills it in on the open
-page when it lands; `--html --callers` into a file waits for it. Its rows are
-callers — something outside the change that names a changed definition — with
-two more columns: `from⇥to⇥facet⇥note⇥line⇥breaks`, where `line` is where
-the mention is and `breaks` is `1` when the change breaks it. A `to` of `-` is
-something the change breaks without it calling anything the change touched.
-The page lists them under the definition, a red *breaks* on its box, and the
-score gains a line: any caller the change breaks makes it *breaks callers
-outside it*. A lazy provider never moves a slice, since a caller is not in the
-change. One that fails is asked again next time rather than kept as having
-found nothing. otis ships one over tsgo.
-
 A provider whose first lines say `#seam: split` is one too slow for every read
 but worth waiting for when its answer moves a slice. Only `--split` runs it,
 and what it says is kept by the two commits, like the callers. A row from one
@@ -437,12 +408,9 @@ made: it joins stories and holds the one that needs the other after it. That
 is the dependency seam's names cannot see — a definition reading a field
 another one added, which neither names — and what a compiler can.
 
-**`containers/<name>`** — not yet. A path in, a box id out, so a definition can
-sit in a package or a bazel target and not only a file.
-
 **`kinds`** — implemented. An executable reading paths on stdin and writing each
 back with its kind (`tests`, `gen`, `cfg`, or nothing for source). Without one
-seam uses `share/kinds.awk`. `SEAM_KINDS` names a command for one run, over the
+seam goes by the path (`src/kinds.rs`). `SEAM_KINDS` names a command for one run, over the
 file.
 
 **`check`** — implemented. The command `--split --branch` checks every commit
@@ -472,65 +440,31 @@ statement).
 
 ## Speed
 
-It is shell over `git`, `ast-grep` and `jq`. A change of 92 files, 145
-definitions, reads in **1.3s** and draws its page in 1.5s, where the two took
-4.6s and 5.2s. A synthetic one of 400 files and 8000 definitions, which nobody
-can review, takes 8s where it took 53s.
+It is one program that asks git for the bytes and does the rest itself. On real
+commits of a large repo (8.4GB of `.git`), in milliseconds, against the shell over
+`ast-grep`, `jq` and `awk` it replaced:
 
-ast-grep's own parse is the cheap part, and it reads a directory in parallel.
-What costs is the jq that flattens its JSON and the awk that reads the two
-sides against the diff — and the way to make either slow is to put a loop over
-the whole change inside a loop over the whole change. Five of those have been
-found and taken out:
+| change | table | score | page |
+|---|---|---|---|
+| 1 file | 459 → 43 | 498 → 41 | 553 → 38 |
+| 14 files | 543 → 70 | 597 → 70 | 741 → 71 |
+| 43 files | 1612 → 78 | 1693 → 89 | 2003 → 91 |
+| 120 files | 777 → 96 | 819 → 98 | 1068 → 102 |
 
-- **Which definition mentions which.** It used to test every definition against
-  every other. It is now one pass over each definition's text against an index
-  of names.
-- **Which definition a member belongs to.** Every method and field was tried
-  against every declaration on both sides. Only the ones in its own file can
-  hold it, and that alone was nine tenths of the awk pass.
-- **The reading order.** Roots first and then the rest, each taken as the
-  smallest of everything still unplaced, which is the square of the change. It
-  is a merge sort now.
-- **The members of a definition.** Printing a class read the whole table again
-  looking for what sat under it; members are indexed by the definition they
-  belong to.
-- **The lines of a definition's diff** (`--html`). Every line of every changed
-  file was tried against every definition in the change rather than against the
-  ones in that file, which is what a page cost to draw.
-
-Two more that are not loops:
-
-- **jq held the whole parse before it read any of it.** ast-grep can hand its
-  matches over one a line (`--json=stream`) rather than as one array, and a
-  change of 8000 definitions then costs jq four megabytes instead of a gigabyte
-  and a half. Neither side needs the other, so both run at once. `share/decls.jq`
-  still takes an array, for a renderer that already feeds it one.
-- **One huge file.** ast-grep hands back the text of every declaration it
-  matches, so a single 2MB generated registry in a change became 28MB of JSON
-  for a regex to walk, and nine minutes. A file over `SEAM_MAX_BYTES` (256KB)
-  is listed as a plain file instead, the way one seam has no language for is.
-  Nobody reads a file that size by definition anyway.
-
-One more that is not a loop either, and was two thirds of the jq: **a regex
-that rewrites a string walks and rebuilds it once a match**, so squeezing the
-whitespace out of a declaration head is the square of the spaces in it. That is
-nothing for a head of a line, and a head is not always a line — a declaration
-whose body is its last block puts a whole configuration object in its
-interface, and one of those runs to tens of kilobytes. The spaces now go by
-splitting on them, which is no regex and one pass, and only whitespace that is
-not a plain space is rewritten at all.
-
-What is left is spread thin: about half the jq that flattens ast-grep's JSON,
-and the rest the awk, `git` and the two trees coming out. There is no one thing
-to take out next.
+What is left is mostly git finding the blobs in its packs. The program is 7MB with
+its four grammars, where `ast-grep` alone was 49MB, and `seam.wasm` is 773KB over the
+wire. Over 130 commits and 9342 rows the line diff, which is imara-diff's and not
+git's, placed a line differently in 9 commits: counts a line or two apart, and one
+definition seam no longer lists.
 
 ## What it wants
 
-`git`, [`ast-grep`](https://ast-grep.github.io), `jq`, and a POSIX shell.
+`git`, and `jq` for `--split`. To build it, `cargo build --release`, and for the
+browser's, zig and the `wasm32-unknown-unknown` target.
 
 ```
 bin/seam-test
+cargo test
 ```
 
 ## Status

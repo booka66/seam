@@ -1,0 +1,9 @@
+#!/bin/sh
+# The C compiler for the grammars when building for the browser: zig's, with libc's
+# headers from wasi, since cc-rs names a target zig does not take.
+args=
+for a in "$@"; do case $a in --target=*) ;; *) args="$args
+$a" ;; esac; done
+IFS='
+'
+exec zig cc -target wasm32-wasi $args

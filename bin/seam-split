@@ -1,0 +1,682 @@
+#!/bin/sh
+# seam-split <rev>                  how to split a change: one slice a story, and
+#                                   which file goes where
+# seam-split <rev> --json           the plan as data
+# seam-split <rev> --branch <name>  those slices as commits, in that order, on a
+#                                   new branch from the base
+# seam-split <rev> --plan-out <file>  the plan as json, rewritten there whenever a
+#                                   check sends seam back to it
+# seam-split <rev> --branch <n> --check '<cmd>'
+#                                   run <cmd> on every commit as it is made, in a
+#                                   worktree of its own, and write the branch only
+#                                   if every one of them passes
+# seam-split <rev> --table <file>   from a table already built
+#
+# `seam <rev> --split` is this. It is a program of its own because it is the part
+# of seam that writes commits and runs what a repo asks it to, which a browser
+# cannot do and reading a change does not need. It wants git and jq, and reads
+# the change through seam: the table and the graph are all it knows.
+share=$(cd "$(dirname "$0")/../share" && pwd)
+seam=${SEAM_BIN:-seam}
+
+# Where seam looks for what a repo tells it, nearest first: the repo's ./.seam,
+# this user's, then each directory in SEAM_PATH (colon separated), and last, for
+# references, the ones seam ships. A line each, and IFS set to a newline only for
+# the list a loop walks, so a path may have spaces.
+nl='
+'
+ifs=$IFS
+seamdirs="./.seam$nl${XDG_CONFIG_HOME:-$HOME/.config}/seam$(printf '%s' "${SEAM_PATH:-}" | awk -v RS=: 'NF { printf "\n%s", $0 }')"
+
+rev= json= table= branch= check= checkset= planout= want=
+for a in "$@"; do
+  case $want in
+    table) table=$a want=; continue ;;
+    branch) branch=$a want=; continue ;;
+    check) check=$a checkset=1 want=; continue ;;
+    planout) planout=$a want=; continue ;;
+  esac
+  case $a in
+    --split) ;;
+    --json) json=1 ;;
+    --table) want=table ;;
+    --check) want=check ;;
+    --plan-out) want=planout ;;
+    --branch) want=branch ;;
+    -*) printf 'seam: no %s\n' "$a" >&2; exit 2 ;;
+    *) rev=$a ;;
+  esac
+done
+case $want in
+  table) echo "seam: --table wants a file" >&2; exit 2 ;;
+  branch) echo "seam: --branch wants a name" >&2; exit 2 ;;
+  check) echo "seam: --check wants a command" >&2; exit 2 ;;
+  planout) echo "seam: --plan-out wants a file" >&2; exit 2 ;;
+esac
+[ -z "$table" ] || [ -r "$table" ] || { printf 'seam: cannot read %s\n' "$table" >&2; exit 2; }
+[ -n "$rev" ] || { sed -n '2,12p' "$0" | sed 's/^# //' >&2; exit 2; }
+
+# The check --branch runs when none is named: a command a line in .seam/check,
+# with check.local before it and this user's after, the way first is found.
+# --check '' is none at all. Found for any plan, so --json can say which one
+# --branch would run.
+if [ -z "$checkset" ]; then
+  IFS=$nl
+  for d in $seamdirs; do
+    IFS=$ifs
+    for f in "$d/check.local" "$d/check"; do
+      [ -f "$f" ] || continue
+      check=$(sed 's/#.*//' "$f" | grep -v '^[[:space:]]*$' | head -1)
+      break 2
+    done
+  done
+  IFS=$ifs
+fi
+
+# References from outside what seam can see, which is the thing it most needs
+# and least can do: an edge here is a name found inside a changed definition,
+# so an import, a route table, a build graph and a compiler are all invisible
+# to it. A provider is a command in references/, found the way the language
+# files are, reading the table on stdin and writing `from⇥to⇥facet⇥note` rows.
+# An end is a definition (path#name, or path#Class.member) or a plain path,
+# for a file the change has no definitions in — which is what an import sweep
+# is made of, and what seam otherwise has nothing to say about. The two trees
+# are in the environment (SEAM_REV, SEAM_BASE, SEAM_HEAD), since what the
+# change did to a line is most of what a provider wants and the table carries
+# only what it did to a definition; SEAM_HEAD is empty for the worktree.
+#
+# A provider that says `#seam: split` is too slow for every plan to run it fresh
+# but worth waiting for when the answer moves a slice: a compiler saying which
+# changed definition reads a field another one added, which no name in either
+# says. What it says is kept by the two commits. One that says `#seam: lazy` is
+# not this program's: a caller is not in the change, so it never moves a slice.
+#
+# providers <eager|lazy|split>: each provider's path, the nearest of a name winning.
+# A file of that name that is not executable (an empty one will do) wins too,
+# and runs nothing: that is how a repo turns off one seam ships.
+# Names of its own for the loop: sh has no locals, and page, split and the
+# rest all run this in the middle of work that has its own f and n.
+providers() {
+  seenrefs=
+  IFS=$nl
+  for refdir in $seamdirs$nl$share; do
+    IFS=$ifs
+    refdir=$refdir/references
+    [ -d "$refdir" ] || continue
+    for reffile in "$refdir"/*; do
+      [ -f "$reffile" ] || continue
+      refname=${reffile##*/}
+      case " $seenrefs " in *" $refname "*) continue ;; esac
+      seenrefs="$seenrefs $refname"
+      [ -x "$reffile" ] || continue
+      if head -n 20 "$reffile" 2>/dev/null | grep -q '^#seam: *lazy'; then
+        [ "$1" = lazy ] && printf '%s\n' "$reffile"
+      elif head -n 20 "$reffile" 2>/dev/null | grep -q '^#seam: *split'; then
+        [ "$1" = split ] && printf '%s\n' "$reffile"
+      else
+        [ "$1" = eager ] && printf '%s\n' "$reffile"
+      fi
+    done
+  done
+}
+# refs <table> [split]: what the providers say, the split ones too when asked.
+refs() {
+  : > "$1.refs"
+  providers eager > "$1.providers"
+  while read -r reffile; do
+    # A provider that fails says nothing rather than stopping the change
+    # being read: seam worked before it existed and works if it breaks.
+    SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" 2>/dev/null | refrows "${reffile##*/}" >> "$1.refs"
+  done < "$1.providers"
+  [ "$2" = split ] || return 0
+  providers split > "$1.providers"
+  [ -s "$1.providers" ] || return 0
+  # Kept only when every one of them ran, like the callers: a compiler that
+  # was not installed yet is asked again rather than remembered as silent.
+  srfile=$(cachefile refs-split "$1")
+  if [ ! -f "$srfile" ]; then
+    : > "$1.split"
+    srok=1
+    while read -r reffile; do
+      printf 'seam: asking %s, which can take a while\n' "${reffile##*/}" >&2
+      SEAM_REV=$rev SEAM_BASE=$base SEAM_HEAD=$head "$reffile" < "$1" > "$1.split.out" 2>"$1.split.err" ||
+        { srok=; printf 'seam: %s failed: %s\n' "${reffile##*/}" "$(head -c 300 "$1.split.err" | tr '\n' ' ')" >&2; }
+      refrows "${reffile##*/}" < "$1.split.out" >> "$1.split"
+    done < "$1.providers"
+    if [ -n "$srok" ]; then mkdir -p "${srfile%/*}" && cp "$1.split" "$srfile"; fi
+    cat "$1.split" >> "$1.refs"
+  else
+    cat "$srfile" >> "$1.refs"
+  fi
+}
+refrows() {
+  awk -F'\t' -v via="$1" 'NF >= 2 && $1 != "" && $2 != "" {
+    print $1 "\t" $2 "\t" ($3 == "iface" ? "iface" : "body") "\t" $4 "\t" via
+  }'
+}
+
+# cachefile <kind> <table>: where seam keeps what it asked something slow, in
+# the repo's git dir: a range by its two commits, which never change, and the
+# worktree by its table, so an edit asks again.
+cachefile() {
+  if [ -n "$head" ]; then key=$(git rev-parse "$base")-$(git rev-parse "$head"); else key=worktree-$(git hash-object "$2"); fi
+  printf '%s/seam-%s/%s.json\n' "$(git rev-parse --path-format=absolute --git-common-dir)" "$1" "$key"
+}
+# The graph seam reads, with what the providers said: kept apart as references,
+# since an end of one may be a file the change has no definitions in, and a
+# reference with a definition at both ends is an edge seam should have had.
+graph() {
+  refs "$1" split
+  "$seam" --table "$1" "$rev" --json | jq -c --rawfile refs "$1.refs" '
+    def cells: split("\n") | map(select(length > 0) | split("\t"));
+    ([.definitions[].id] | map({key: ., value: true}) | from_entries) as $isdef
+    | ($refs | cells | map(select(length >= 2) | {
+        from: .[0], to: .[1],
+        facet: (if .[2] == "iface" then "iface" else "body" end),
+        note: (if (.[3] // "") == "" then null else .[3] end),
+        via: (.[4] // null)})) as $rs
+    | .references = $rs
+    | .edges += ($rs | map(select($isdef[.from] and $isdef[.to] and .from != .to) | . + {new: false}))'
+}
+
+# The split, drawn: each slice numbered, named after its entry point, with its
+# size, then the files that go with it, and against a file anything a reader
+# should know: that another slice changed it too, or which file it is the test
+# of. Colour the way the score has it.
+draw_split() {
+  colour=0
+  [ -t 1 ] && colour=1
+  case ${SEAM_COLOR:-} in 1|yes|always) colour=1 ;; 0|no|never) colour=0 ;; esac
+  awk -F'\t' -v c="$colour" '
+    BEGIN { if (c) { R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; Y = "\033[33m" }; print "" }
+    $1 == "rev" { printf "  %sseam%s  %s%s%s\n", B, R, D, $2, R; next }
+    $1 == "totals" { printf "  %s%s%s\n", D, $2, R; next }
+    $1 == "slice" {
+      if ($3 == "rest") { restn = $2; restfiles = $7 + 0 }
+      if ($3 == "first") hasfirst = 1
+      name = $4 ($5 != "" ? " " D "+" $5 R : "")
+      size = ($3 == "rest" ? "" : $6 " definition" ($6 == 1 ? "" : "s") " · ") $7 " file" ($7 == 1 ? "" : "s") " · " $8 " line" ($8 == 1 ? "" : "s")
+      printf "\n  %s%2d%s  %s%s%s  %s%s%s\n", B, $2, R, ($3 == "rest" ? D : B), name, R, D, size, R
+      if ($3 == "base") printf "      %swhat the other slices lean on, so it goes first%s\n", D, R
+      if ($3 == "first") printf "      %swhat the code waits on, and seam has no language to see, so it goes first%s\n", D, R
+      if ($3 == "rest") printf "      %sloose definitions, files seam read nothing from, tests nothing claimed%s\n", D, R
+      next
+    }
+    $1 == "file" {
+      note = $4 ($4 != "" && $5 != "" ? ", " : "") $5
+      printf "      %s%s%s%s\n", $3, (note != "" ? "  " : ""), ($4 != "" ? Y : D), (note != "" ? note R : "")
+      next
+    }
+    END {
+      # The rest is what seam read no definitions from, and it goes last
+      # because nothing in the graph reaches it. A migration, a schema, a
+      # generated table, a build file are all in there, and those are the
+      # things the rest of a change most often waits on. seam cannot tell
+      # from its edges which way round it is, so it says so rather than
+      # letting the order pass for one it checked.
+      if (restfiles > 0 && !hasfirst)
+        printf "\n  %s%sslice %s is %d file%s seam read no definitions from, and it goes last.%s\n      %sA migration or a schema in there has to go first, and seam has no language for either, so it cannot tell. Name them in .seam/first and they lead.%s\n",
+          Y, B, restn, restfiles, (restfiles == 1 ? "" : "s"), R, D, R
+      printf "\n  %s--branch <name> writes these as commits, in this order, on a new branch from the base.%s\n\n", D, R
+    }
+  '
+}
+
+# What the order does not hold, which seam cannot see from its own edges: a
+# definition one slice takes away that a slice after it is still naming. An
+# edge is a name found inside a changed definition, and an import specifier is
+# not inside one, so a type that moves package leaves every file importing it
+# pointing at nothing until the slice that rewrites those imports lands. The
+# commits in between do not build, and only the last is checked against the
+# head tree, so nothing else would say so.
+#
+# A line a later slice takes away is a line the base had, and that the tree
+# still has at the earlier commit: that is the evidence, and it is in the diff
+# seam has already read. One row a collision: the name, the slice that takes
+# it, the slice that still names it, a file, and how many more.
+hazards() {
+  [ -n "$head" ] || return 0
+  jq -r '.slices[] as $s | $s.definitions[]? | [., ($s.n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/defslice"
+  jq -r '.slices[] as $s | $s.files[]? | [.path, ($s.n | tostring)] | @tsv' "$tmp/plan.json" > "$tmp/fileslice"
+  # A definition that goes, by the name its users write: a TypeScript type
+  # sharing a name with a const is "type X" here and X everywhere else.
+  awk -F'\t' '$2 != "file" && $6 == "removed" {
+      nm = $3; sub(/^type /, "", nm)
+      if (nm != "" && nm !~ /[^A-Za-z0-9_$]/) print $1 "#" ($4 == "" ? $3 : $4 "." $3) "\t" nm "\t" $1
+    }' "$out" | sort -u > "$tmp/gone"
+  [ -s "$tmp/gone" ] || return 0
+  git diff -U0 --no-renames "$base" "$head" 2>/dev/null |
+  awk -F'\t' '
+    function boundary(line, nm,   re) { re = nm; gsub(/\$/, "\\$", re); return line ~ ("(^|[^A-Za-z0-9_$])" re "($|[^A-Za-z0-9_$])") }
+    FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
+    FILENAME == ARGV[2] { if (!($1 in fat) || $2 + 0 > fat[$1]) fat[$1] = $2 + 0; next }
+    FILENAME == ARGV[3] { g++; ID[g] = $1; NM[g] = $2; HOME_[g] = $3; next }
+    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+    /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+    /^-[^-]/ || /^-$/ {
+      if (!(f in fat)) next
+      for (x = 1; x <= g; x++) {
+        if (HOME_[x] == f) continue
+        if (!(ID[x] in at) || at[ID[x]] >= fat[f]) continue
+        if (!boundary(substr($0, 2), NM[x])) continue
+        k = NM[x] SUBSEP at[ID[x]] SUBSEP fat[f]
+        if (!(k in seen)) { seen[k] = f; order[++m] = k }
+        more[k]++
+      }
+    }
+    END {
+      for (i = 1; i <= m; i++) {
+        split(order[i], w, SUBSEP)
+        print w[1] "\t" w[2] "\t" w[3] "\t" seen[order[i]] "\t" (more[order[i]] - 1)
+      }
+    }
+  ' "$tmp/defslice" "$tmp/fileslice" "$tmp/gone" -
+}
+
+# What goes before everything, because the repo says so and seam cannot tell:
+# a path pattern a line in .seam/first, then this user's, the way the language
+# files are found. Matched against the files seam read no definitions from,
+# which are the only ones that can be lifted.
+# A sweep: the same edit in file after file. A rename, a lint fix, an import
+# that moved — the files have no definitions seam can read, since only their
+# import lines or a call inside nothing changed, and one at a time they all
+# fall to the rest. Their changed lines are the same text, so that is what
+# groups them: three files or more with one edit between them are one thing to
+# read, and reading it once is reading all of it.
+#
+# It reads the diff of the two trees, which --table does not change, so a plan
+# built from a table already made has its sweeps too. The worktree has no head
+# commit to diff and so has none.
+sweeps() {
+  if [ -z "$head" ] || ! [ -s "$out" ]; then echo '[]'; return; fi
+  awk -F'\t' '$2 == "file" { print $1 }' "$out" > "$tmp/nodefs"
+  if [ ! -s "$tmp/nodefs" ]; then echo '[]'; return; fi
+  tr '\n' '\0' < "$tmp/nodefs" | xargs -0 git diff -U0 --no-renames "$base" "$head" -- 2>/dev/null |
+    awk '
+      /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+      /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); if (f == "/dev/null") f = fo; next }
+      /^[-+]/ {
+        if ($0 ~ /^(\+\+\+|---)/) next
+        t = substr($0, 2); sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+        sig[f] = sig[f] "\001" substr($0, 1, 1) t
+      }
+      END { for (f in sig) print sig[f] "\t" f }
+    ' | LC_ALL=C sort |
+    awk -F'\t' '
+      { if ($1 == prev) { n++; g = g "\t" $2 } else { if (n >= 3) print g; prev = $1; n = 1; g = $2 } }
+      END { if (n >= 3) print g }
+    ' | jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))'
+}
+
+# The branch's own commits, when it has more than one: which of them each
+# changed line came from. They are the author's split, made knowing things no
+# diff says — what waits on another MR, what is a fix and what is a feature —
+# and they carry dependencies seam's edges cannot see: a field read in one
+# definition and added in another is not a name either of them shares, but
+# the commit that reads it came after the one that added it.
+#
+# An added line is blamed on the head, a removed one reverse-blamed on the
+# base (the last commit it was still in, so the one after took it out), both
+# stopping at the base. Every line is then counted against the definition it
+# falls in, by commit, or against its file when none claims it; files count
+# every line. One commit, a merge request of one, or the worktree has nothing
+# to say, and the plan is what it was without it.
+history() {
+  none='{"commits": [], "defs": {}, "files": {}}'
+  if [ -z "$head" ] || [ "$(git rev-list --count "$base..$head" 2>/dev/null || echo 0)" -lt 2 ]; then
+    echo "$none"; return
+  fi
+  git log --reverse --topo-order --format='%H%x09%s' "$base..$head" > "$tmp/commits"
+  git diff -U0 --no-renames "$base" "$head" 2>/dev/null |
+    awk '
+      /^--- / { fo = substr($0, 5); sub(/^a\//, "", fo); next }
+      /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); next }
+      /^@@/ {
+        split($0, w, " "); split(substr(w[2], 2), a, ","); split(substr(w[3], 2), b, ",")
+        oc = (2 in a) ? a[2] + 0 : 1; nc = (2 in b) ? b[2] + 0 : 1
+        if (nc > 0) L["new\t" f] = L["new\t" f] " -L " b[1] "," (b[1] + nc - 1)
+        if (oc > 0) L["old\t" fo] = L["old\t" fo] " -L " a[1] "," (a[1] + oc - 1)
+      }
+      END { for (k in L) print k "\t" L[k] }
+    ' > "$tmp/blames"
+  while IFS='	' read -r side p ranges; do
+    # shellcheck disable=SC2086 # ranges is -L a,b words, split on purpose
+    if [ "$side" = new ]; then git blame -p $ranges "$base..$head" -- "$p"
+    else git blame -p --reverse $ranges "$base..$head" -- "$p"; fi 2>/dev/null |
+      awk -v s="$side" -v p="$p" '/^[0-9a-f]{40} / { print p "\t" s "\t" $3 "\t" $1 }'
+  done < "$tmp/blames" > "$tmp/blamed"
+  awk -F'\t' -v b="$(git rev-parse "$base^{commit}")" '
+    BEGIN { prev = b }
+    FILENAME == ARGV[1] { n++; at[$1] = n; after[prev] = n; prev = $1; next }
+    FILENAME == ARGV[2] {
+      if ($2 == "file" || $4 != "" || $8 == "") next
+      id = $1 "#" $3; k = ++nd[$1]
+      if ($7 == "new") { NA[$1, k] = $8 + 0; NZ[$1, k] = $9 + 0; if ($14 != "") { OA[$1, k] = $14 + 0; OZ[$1, k] = $15 + 0 } }
+      else { OA[$1, k] = $8 + 0; OZ[$1, k] = $9 + 0 }
+      ID[$1, k] = id
+      next
+    }
+    {
+      c = ($2 == "new") ? at[$4] : after[$4]
+      if (!c) next
+      l = $3 + 0; owner = ""
+      for (k = 1; k <= nd[$1] && owner == ""; k++) {
+        if ($2 == "new" && NA[$1, k] && l >= NA[$1, k] && l <= NZ[$1, k]) owner = ID[$1, k]
+        if ($2 == "old" && OA[$1, k] && l >= OA[$1, k] && l <= OZ[$1, k]) owner = ID[$1, k]
+      }
+      if (owner != "") d[owner "\t" c]++
+      f[$1 "\t" c]++
+    }
+    END { for (x in d) print "defs\t" x "\t" d[x]; for (x in f) print "files\t" x "\t" f[x] }
+  ' "$tmp/commits" "$out" "$tmp/blamed" |
+    jq -R -s --rawfile commits "$tmp/commits" '
+      reduce (split("\n")[] | select(length > 0) | split("\t")) as [$t, $k, $c, $n] (
+        {commits: [$commits | split("\n")[] | select(length > 0) | split("\t") | {sha: .[0], subject: .[1]}
+                   ] | to_entries | map(.value + {n: (.key + 1)}),
+         defs: {}, files: {}};
+        .[$t][$k][$c] = ($n | tonumber))'
+}
+
+plan() {
+  globs=
+  # first.local before first, this repo before this user: a repo that comes to
+  # ship one of these should not silently take over yours, and yours is the
+  # one thing here git is not meant to see.
+  IFS=$nl
+  for d in $seamdirs; do
+    IFS=$ifs
+    for f in "$d/first.local" "$d/first"; do
+      [ -f "$f" ] || continue
+      globs="$globs $(sed 's/#.*//' "$f" | tr -s '[:space:]' ' ')"
+      break 2
+    done
+  done
+  IFS=$ifs
+  : > "$tmp/first.paths"
+  if [ -n "$(printf '%s' "$globs" | tr -d '[:space:]')" ]; then
+    # In a subshell with pathname expansion off: the patterns are meant for
+    # the paths in the change, and a bare `for g in $globs` matches them
+    # against the working directory first, so prisma/* became whatever is in
+    # prisma today and matched nothing in the table.
+    ( set -f
+      awk -F'\t' '$2 == "file" { print $1 }' "$out" | while read -r p; do
+        for g in $globs; do
+          case $p in $g) printf '%s\n' "$p"; break ;; esac
+        done
+      done ) >> "$tmp/first.paths"
+  fi
+  jq -R -s 'split("\n") | map(select(length > 0))' < "$tmp/first.paths" > "$tmp/first.json"
+  sweeps > "$tmp/sweeps.json"
+  history > "$tmp/history.json"
+  jq -c --argjson first "$(cat "$tmp/first.json")" \
+    --argjson sweeps "$(cat "$tmp/sweeps.json")" --slurpfile history "$tmp/history.json" \
+    -f "$share/split.jq" < "$tmp/graph.json" > "$tmp/plan.raw" || exit 1
+  if [ "$1" = json ]; then
+    jq -c --arg check "$check" '. + {check: (if $check == "" then null else $check end)}' "$tmp/plan.raw"
+  else
+    # The rows draw_split reads: a slice goes by the message it will have.
+    jq -r '"rev\t" + (.rev // "a change"),
+      "totals\t\(.totals.definitions) definitions · \(.totals.edges) edges · \(.totals.files) files → \(.slices | length) slices",
+      (.slices[] | . as $s
+       | ("slice\t\($s.n)\t\($s.kind)\t"
+          + (if $s.commit then $s.commit.subject
+             elif $s.kind == "base" then ($s.roots | join(", ")) else $s.name end)
+          + "\t" + (if $s.commit then "" elif $s.kind == "story" and ($s.roots | length) > 1 then "\(($s.roots | length) - 1) more" else "" end)
+          + "\t\($s.definitions | length)\t\($s.files | length)\t\($s.lines)"),
+         ($s.files[] | "file\t\($s.n)\t\(.path)\t"
+            + (if (.shared | length) > 0 then "shared with " + (.shared | map(tostring) | join(", ")) else "" end)
+            + "\t" + (if .via then "with " + (.via | sub("^.*/"; "")) else "" end)))' "$tmp/plan.raw"
+  fi
+}
+
+# --branch: the slices as commits, in the order the plan has them, on a new
+# branch from the base. Nothing is checked out and the worktree is not touched:
+# each commit is built in an index of its own, from the base tree, a slice at
+# a time. A file one slice has goes in whole, from the head. A file two slices
+# share is rebuilt for each slice short of its last from the diff of the whole
+# file, keeping a line when the definition it falls in has been reached, and
+# at its last slice it is the head's file exactly. The last commit is checked
+# against the head tree, so a slice that did not add up cannot pass quietly.
+stack() {
+  seamroot=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  [ -n "$head" ] || { echo "seam: --branch wants two commits, not the worktree" >&2; exit 2; }
+  git show-ref --verify -q "refs/heads/$branch" && { printf 'seam: %s is already a branch\n' "$branch" >&2; exit 2; }
+  plan json > "$tmp/plan.json"
+  # A caller drawing the plan needs to see it change: a fuse rewrites it, and
+  # a screen still showing the one it started with is showing nine slices that
+  # are now three.
+  [ -z "$planout" ] || cp "$tmp/plan.json" "$planout"
+  n=$(jq '.slices | length' "$tmp/plan.json")
+  [ "$n" -gt 1 ] || { echo "seam: one slice, which is the change as it is; nothing to split" >&2; exit 1; }
+  hazards > "$tmp/hazards"
+  if [ -s "$tmp/hazards" ]; then
+    echo "seam: this order does not stand up, so seam has not written it." >&2
+    while IFS='	' read -r nm from to where more; do
+      printf 'seam:   slice %s takes %s away, and slice %s is still naming it (%s%s).\n' \
+        "$from" "$nm" "$to" "$where" "$([ "$more" -gt 0 ] && printf ', and %s more' "$more")" >&2
+    done < "$tmp/hazards"
+    echo "seam: an edge seam has is a name inside a changed definition, and an import is not one, so it did not see this. Those slices belong in one commit; --split still shows the shape." >&2
+    exit 1
+  fi
+  restfiles=$(jq -r 'if any(.slices[]; .kind == "first") then 0
+    else [.slices[] | select(.kind == "rest") | .files | length] | add // 0 end' "$tmp/plan.json")
+  [ "$restfiles" -eq 0 ] || printf 'seam: the last slice is %s file%s seam read no definitions from. A migration or a schema in there has to go first, and seam has no language for either, so it cannot tell. Name them in .seam/first and they lead.\n' \
+    "$restfiles" "$([ "$restfiles" = 1 ] || echo s)" >&2
+  headc=$(git rev-parse "$head^{commit}")
+  zeros=0000000000000000000000000000000000000000
+  # The check is the only thing here that knows whether a stack stands up, so
+  # it is allowed to change the plan. When a slice fails and every file the
+  # check named belongs to other slices, those are one commit with it: they
+  # fuse and the whole thing is built again. Whatever that breaks, the next
+  # pass catches — a fuse only ever makes the stack shorter, and the slices
+  # before the one that failed are the same commits they were, so they are
+  # not checked twice.
+  fused=0 verified=0
+  while :; do
+  parent=$(git rev-parse -q --verify "$base^{commit}" 2>/dev/null) || parent=
+  # A shared file: which slice each definition's lines go to, the slice the
+  # unclaimed lines go to (no id), and the last slice that touches it.
+  jq -r '.shared[] | .path as $p | (.definitions | to_entries[] | [$p, .key, .value] | @tsv), ([$p, "", .rest] | @tsv)' "$tmp/plan.json" > "$tmp/owners"
+  jq -r '.shared[] | [.path, ([.rest] + [.definitions[]] | max)] | @tsv' "$tmp/plan.json" > "$tmp/last"
+  rm -f "$tmp/index"
+  export GIT_INDEX_FILE="$tmp/index"
+  git read-tree "$base" || exit 1
+  again=
+  k=1
+  while [ "$k" -le "$n" ]; do
+    # Whole from the head: this slice's own files, and any shared file this
+    # slice is the last to touch.
+    { jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .files[] | select((.shared | length) == 0) | .path' "$tmp/plan.json"
+      awk -F'\t' -v k="$k" '$2 == k { print $1 }' "$tmp/last"; } > "$tmp/whole"
+    : > "$tmp/entries"
+    if [ -s "$tmp/whole" ]; then
+      tr '\n' '\0' < "$tmp/whole" | xargs -0 git ls-tree -z "$head" -- > "$tmp/entries"
+      tr '\0' '\n' < "$tmp/entries" | cut -f2- | grep -vxF -f - "$tmp/whole" |
+        while read -r p; do printf '0 %s\t%s\0' "$zeros" "$p"; done >> "$tmp/entries"
+    fi
+    # Shared files still short of their last slice: rebuilt for this one.
+    awk -F'\t' -v k="$k" '$2 > k { print $1 }' "$tmp/last" | while read -r p; do
+      mode=$(git ls-tree "$head" -- "$p" | cut -d' ' -f1)
+      git diff -U999999 --no-renames "$base" "$head" -- "$p" > "$tmp/full"
+      sha=$(awk -F'\t' -v k="$k" -v p="$p" '
+        FILENAME == ARGV[1] { if ($1 == p) { if ($2 == "") rest = $3 + 0; else own[$2] = $3 + 0 }; next }
+        FILENAME == ARGV[2] {
+          if ($1 == p && $2 != "file" && $8 != "") {
+            id = $1 "#" ($4 == "" ? $3 : $4 "." $3)
+            n++; S[n] = (id in own) ? own[id] : rest
+            if ($7 == "new") { NA[n] = $8 + 0; NZ[n] = $9 + 0; if ($14 != "") { OA[n] = $14 + 0; OZ[n] = $15 + 0 } }
+            else { OA[n] = $8 + 0; OZ[n] = $9 + 0 }
+          }
+          next
+        }
+        !body { if (/^@@/) { body = 1; split($0, w, " "); split(w[2], a, ","); o = substr(a[1], 2) + 0; split(w[3], b, ","); nn = substr(b[1], 2) + 0 }; next }
+        {
+          c = substr($0, 1, 1); t = substr($0, 2)
+          if (c == "\\") { if (kept) nonl[m] = 1; next }
+          kept = 0
+          if (c == "-") { if (owner("old", o) > k) emit(t); o++ }
+          else if (c == "+") { if (owner("new", nn) <= k) emit(t); nn++ }
+          else { emit(t); o++; nn++ }
+        }
+        function owner(side, l,   x) {
+          for (x = 1; x <= n; x++) {
+            if (side == "new" && NA[x] && l >= NA[x] && l <= NZ[x]) return S[x]
+            if (side == "old" && OA[x] && l >= OA[x] && l <= OZ[x]) return S[x]
+          }
+          return rest
+        }
+        function emit(t) { out[++m] = t; kept = 1 }
+        END { for (i = 1; i <= m; i++) printf "%s%s", out[i], (i < m || !nonl[i]) ? "\n" : "" }
+      ' "$tmp/owners" "$out" "$tmp/full" | git hash-object -w --stdin) || exit 1
+      printf '%s %s\t%s\0' "${mode:-100644}" "$sha" "$p" >> "$tmp/entries"
+    done
+    git update-index -z --index-info < "$tmp/entries" || exit 1
+    tree=$(git write-tree) || exit 1
+    # A slice that is one of the branch's own commits says what that commit
+    # said: the author wrote it for a reviewer, and seam's is a placeholder.
+    from=$(jq -r --argjson k "$k" '.slices[] | select(.n == $k) | .commit.sha // empty' "$tmp/plan.json")
+    commit=$(if [ -n "$from" ]; then git log -1 --format=%B "$from"
+    else
+      jq -r --argjson k "$k" --argjson n "$n" '.slices[] | select(.n == $k)
+      | .name + (if (.roots | length) > 1 then " and " + ((.roots | length) - 1 | tostring) + " more" else "" end),
+        "", "Slice \($k) of \($n), cut by seam --split.",
+        (if (.definitions | length) > 0 then "", (.definitions[] | "  " + .) else empty end)' "$tmp/plan.json"; fi |
+      git commit-tree "$tree" ${parent:+-p "$parent"}) || exit 1
+    short=$(git rev-parse --short "$commit")
+    subject=$(git log -1 --format=%s "$commit")
+    # Every commit stood up, or the branch is not written. Only the last one
+    # was ever checked, against the head tree, so a stack whose middle did not
+    # build looked exactly like one that did. The command runs in a worktree of
+    # that commit alone, so it sees the tree as a reader of that commit would
+    # and the worktree you are in is not touched; what it needs to run there —
+    # a link to node_modules, a warm cache — is its own business, and it is
+    # told which slice it is on.
+    if [ -n "$check" ] && [ "$k" -le "$verified" ]; then
+      printf '  %s  %s  %s ... ok\n' "$k" "$short" "$subject"
+    elif [ -n "$check" ]; then
+      printf '  %s  %s  %s ... ' "$k" "$short" "$subject"
+      # One worktree for the whole stack, moved from commit to commit, rather
+      # than one a commit. A worktree of a monorepo is ten seconds and a
+      # gigabyte before anything is installed in it, and whatever a check
+      # needs before it can run costs more than the check does; git does not
+      # touch what it does not track, so an install done for slice one is
+      # still there for slice two. SEAM_ROOT is the worktree seam was run
+      # from, for a check that would rather read the commit than stand in it.
+      if [ ! -d "$tmp/wt" ]; then
+        if ! git worktree add --detach -q "$tmp/wt" "$commit" 2>"$tmp/check.out"; then
+          echo; echo "seam: could not make a worktree to check in:" >&2
+          sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
+        fi
+      elif ! git -C "$tmp/wt" checkout --detach -q "$commit" 2>"$tmp/check.out"; then
+        echo; echo "seam: could not move the check's worktree to slice $k:" >&2
+        sed 's/^/seam:   /' "$tmp/check.out" >&2; exit 1
+      fi
+      ( cd "$tmp/wt" && SEAM_SLICE=$k SEAM_SLICES=$n SEAM_COMMIT=$commit SEAM_ROOT=$seamroot SEAM_BASE=$base SEAM_HEAD=$head SEAM_TABLE=$out eval "$check" ) > "$tmp/check.out" 2>&1
+      ok=$?
+      if [ "$ok" -ne 0 ]; then
+        echo "no"
+        # Which other slices this one was waiting for. Two things point at
+        # them: a path the check named that another slice has, and the name of
+        # a changed definition in what it said — an error is reported where it
+        # is noticed, which is often not where the cause was changed, and a
+        # typechecker says the name of the type it could not match.
+        jq -r '.slices[] | .n as $n
+               | (.files[] | [.path, ($n | tostring)] | @tsv),
+                 (.definitions[] | [(sub("^.*#"; "") | sub("^type "; "")), ($n | tostring)] | @tsv)' \
+          "$tmp/plan.json" | awk -F'\t' 'length($1) > 2' > "$tmp/whose"
+        awk -F'\t' -v me="$k" '
+          function boundary(line, nm,   re) { re = nm; gsub(/\$/, "\\$", re); return line ~ ("(^|[^A-Za-z0-9_$])" re "($|[^A-Za-z0-9_$])") }
+          FILENAME == ARGV[1] { at[$1] = $2 + 0; next }
+          {
+            for (p in at) {
+              if (at[p] == me) continue
+              if (p ~ /\//) { if (index($0, p)) hit[at[p]] = 1 }
+              else if (boundary($0, p)) hit[at[p]] = 1
+            }
+          }
+          END { n = 0; for (x in hit) { n++; list = list " " x }
+                if (n) print substr(list, 2) }
+        ' "$tmp/whose" "$tmp/check.out" > "$tmp/blame"
+        # Nothing attributable, but there is a slice after this one: a
+        # typechecker truncates a union it cannot match and so names neither a
+        # file nor a definition, and the cause is still somewhere ahead. Take
+        # the next slice and go again — blunt, but it only ever goes one way,
+        # and the check is what says when to stop. A change that ends up one
+        # commit was one commit; that is an answer, and a proved one.
+        if [ "$ok" -ne 127 ] && [ ! -s "$tmp/blame" ] && [ "$k" -lt "$n" ] && [ "$fused" -lt 6 ]; then
+          printf '%s\n' "$((k + 1))" > "$tmp/blame"
+          blind=1
+        else
+          blind=
+        fi
+        if [ "$ok" -ne 127 ] && [ -s "$tmp/blame" ] && [ "$fused" -lt 6 ]; then
+          # Fuse and go again rather than hand back a plan already known to be
+          # wrong. Six, because a change that needs a seventh is one commit
+          # and is taking a long time to say so.
+          if [ -n "$blind" ]; then
+            printf 'it wants something ahead of it, unnamed; taking slice %s\n' "$(cat "$tmp/blame")"
+          else
+            printf 'it wants %s\n' "$(sed 's/ /, /g; s/^/slice /' "$tmp/blame")"
+          fi
+          jq --argjson fuse "$(printf '%s %s' "$k" "$(cat "$tmp/blame")" | jq -R 'split(" ") | map(select(length > 0) | tonumber)')" \
+            -f "$share/merge.jq" < "$tmp/plan.json" > "$tmp/plan.new" && mv "$tmp/plan.new" "$tmp/plan.json" || exit 1
+          n=$(jq '.slices | length' "$tmp/plan.json")
+          [ -z "$planout" ] || cp "$tmp/plan.json" "$planout"
+          verified=$((k - 1)); fused=$((fused + 1)); again=1
+          break
+        fi
+        printf 'seam: slice %s of %s does not pass the check, so %s is not written.\n' "$k" "$n" "$branch" >&2
+        if [ -s "$tmp/check.out" ]; then
+          printf 'seam: the last twenty lines of it:\n' >&2
+          tail -20 "$tmp/check.out" | sed 's/^/seam:   /' >&2
+        else
+          printf 'seam: it said nothing, and exited %s.\n' "$ok" >&2
+        fi
+        if [ "$ok" -eq 127 ]; then
+          printf 'seam: that is the check not running, rather than the slice failing. It runs under /bin/sh, so a command your interactive shell finds by way of a version manager or a function is not always there; give it a path, or a shell that loads what it needs.\n' >&2
+        elif [ "$fused" -ge 6 ]; then
+          printf 'seam: seam has fused six times and it still does not stand up. This change is one commit.\n' >&2
+        elif [ "$k" -ge "$n" ]; then
+          printf 'seam: and it is the last slice, so there is nothing left to fuse it with. The change as a whole does not pass this check — which is worth knowing, and is not about the split.\n' >&2
+        else
+          printf 'seam: and nothing it said points at another slice. This slice does not stand up on its own.\n' >&2
+        fi
+        exit 1
+      fi
+      echo "ok"
+    else
+      printf '  %s  %s  %s\n' "$k" "$short" "$subject"
+    fi
+    parent=$commit
+    k=$((k + 1))
+  done
+  [ -n "$again" ] || break
+  printf '  %s\n' "── fused, and building it again ──"
+  done
+  unset GIT_INDEX_FILE
+  [ ! -d "$tmp/wt" ] || git worktree remove --force "$tmp/wt" 2>/dev/null
+  git update-ref "refs/heads/$branch" "$parent" || exit 1
+  if git diff-tree --quiet "$parent" "$headc"; then
+    printf '%s: %s commits from %s, ending at the tree %s has.\n' "$branch" "$n" "$base" "$head"
+  else
+    printf 'seam: %s does not end at the tree %s has. This is a bug in the split; git diff %s %s shows what is off.\n' "$branch" "$head" "$branch" "$head" >&2
+    exit 1
+  fi
+}
+
+# The table once, from seam or from the caller, and the two trees from it. What
+# seam says about a rev (that it is not a commit, that two dots undo a branch) it
+# says here, once.
+tmp=$(mktemp -d) || exit 1
+out=$(mktemp) || exit 1
+trap 'rm -rf "$tmp" "$out" "$out.refs" "$out.providers" "$out.split" "$out.split.out" "$out.split.err"' EXIT
+if [ -n "$table" ]; then cat "$table" > "$out"
+else "$seam" "$rev" > "$out" || exit $?
+fi
+ends=$("$seam" --table "$out" "$rev" --json 2>/dev/null | jq -r '[.base // "", .head // ""] | @tsv') || exit 1
+base=$(printf '%s' "$ends" | cut -f1)
+head=$(printf '%s' "$ends" | cut -f2)
+graph "$out" > "$tmp/graph.json"
+if [ -n "$branch" ]; then stack
+elif [ -n "$json" ]; then plan json
+else plan "" | draw_split; fi
